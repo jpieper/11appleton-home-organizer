@@ -3,13 +3,11 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Calendar + Sheet (GIS OAuth with Silent Re-Auth)</title>
+  <title>Gothic.js + Calendar/Sheets Example</title>
 
-  <!-- Minimal styling -->
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
+      margin: 0; padding: 0;
       height: 100%;
       font-family: sans-serif;
       display: flex;
@@ -18,9 +16,7 @@
     header {
       padding: 1rem;
     }
-    button {
-      margin-right: 1rem;
-    }
+    button { margin-right: 1rem; }
     main {
       flex: 1;
       display: flex;
@@ -31,15 +27,17 @@
       flex: 1;
       overflow-y: auto;
       padding: 1rem;
+      border: 1px solid #ccc;
+      margin-bottom: 1rem;
     }
     ul { padding-left: 1.2rem; }
   </style>
 </head>
 <body>
-  <!-- Header with optional manual Auth buttons -->
   <header>
-    <button id="authorizeButton" disabled>Authorize</button>
-    <button id="signoutButton" disabled>Sign Out</button>
+    <div id="signin-button-container" style="display:inline-block;"></div>
+    <button id="signoutButton">Sign Out</button>
+    <button id="revokeButton">Revoke</button>
   </header>
 
   <main>
@@ -53,186 +51,356 @@
     </div>
   </main>
 
-  <!--
-    1) Google Identity Services (GIS) library for OAuth
-       We'll call gisLoaded() once it's loaded.
-  -->
-  <script
-    src="https://accounts.google.com/gsi/client"
-    async defer
-    onload="gisLoaded()">
-  </script>
+  <!-- 1) jwt-decode from a CDN (so we can remove the import in gothic.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/jwt-decode@3.1.2/build/jwt-decode.min.js"></script>
 
   <!--
-    2) Google API Client library (for Sheets/Calendar)
-       We'll call gapiLoaded() once it's loaded.
+    2) The entire gothic.js library, slightly modified to remove the "import jwt_decode" line.
+       We'll define a global "jwt_decode" from the script above.
+       Then we wrap the code in a <script type="module">, export default gothic, etc.
   -->
-  <script
-    src="https://apis.google.com/js/api.js"
-    async defer
-    onload="gapiLoaded()">
-  </script>
+  <script type="module">
+    // -------------------------------------------------------------------
+    // BEGIN gothic.js contents (with minor tweak: use global jwt_decode)
+    // -------------------------------------------------------------------
 
-  <script>
-    /***********************************************************************
-     * 1) CONFIGURATION
-     ***********************************************************************/
-    // Provided by you:
-    const CLIENT_ID   = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
-    const CALENDAR_ID = '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com';
-    const SHEET_ID    = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
+    // We'll define "gothic" as an ES module export:
+    // (Removed the 'import jwt_decode from "jwt-decode";' line)
 
-    // If your sheet data is in 'Sheet1' column A:
-    const SHEET_RANGE = 'Sheet1!A:A';
+    const state = {
+      prev:      false,
+      loaded:    false,
+      cid:       null,
+      key:       null,
+      scope:     null,
+      discovery: null,
+      user:      null
+    };
 
-    // OAuth scopes needed for reading Calendar and Sheets
-    const SCOPES = [
-      'https://www.googleapis.com/auth/calendar.readonly',
-      'https://www.googleapis.com/auth/spreadsheets.readonly'
-    ].join(' ');
+    const obs = [];
+    let googleRef, gapiRef;
 
-    /***********************************************************************
-     * 2) GLOBALS
-     ***********************************************************************/
-    let tokenClient;    // GIS token client
-    let gapiInited = false;
-    let gisInited  = false;
+    const gothic = {
+      load,
+      recognize,
+      button,
+      onetap,
+      observe,
+      unobserve,
+      signout,
+      revoke,
+      user
+    };
 
-    // UI elements
-    const authorizeButton = document.getElementById('authorizeButton');
-    const signoutButton   = document.getElementById('signoutButton');
+    export default gothic;
 
-    /***********************************************************************
-     * 3) LOADING THE GAPI & GIS LIBRARIES
-     ***********************************************************************/
-    // Called once the "apis.google.com/js/api.js" script loads
-    function gapiLoaded() {
-      gapi.load('client', initializeGapiClient);
+    function load(clientId, apiKey, scope, discovery) {
+      state.cid       = clientId;
+      state.key       = apiKey;
+      state.scope     = scope;
+      state.discovery = discovery;
+
+      // If we have a localStorage marker, we assume we recognized them before.
+      state.prev = window.localStorage.getItem(`gothic-id`) ? true : false;
+
+      _load_libaries();
     }
 
-    // After GAPI loads, initialize the client (no API key, just discovery docs)
-    async function initializeGapiClient() {
-      await gapi.client.init({
-        discoveryDocs: [
-          'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
-          'https://sheets.googleapis.com/$discovery/rest?version=v4'
-        ],
-      });
-      gapiInited = true;
-      maybeEnableAuth();
+    function recognize() {
+      return state.prev;
     }
 
-    // Called once the GIS script loads
-    function gisLoaded() {
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: (resp) => {
-          // This callback is dynamically replaced before each token request
-        },
-      });
-      gisInited = true;
-      maybeEnableAuth();
+    function observe(cb) {
+      obs.push(cb);
     }
 
-    // Enable the "Authorize" button if both libraries are ready
-    function maybeEnableAuth() {
-      if (gapiInited && gisInited) {
-        authorizeButton.disabled = false;
-        // Attempt silent re-auth on page load
-        trySilentAuth();
+    function button(parent_id, params = {}) {
+      const ctr = document.getElementById(parent_id);
+      if (!ctr) {
+        throw new Error(`No container for signin button: '${parent_id}' `);
+      }
+      const options = {
+        type:  'standard',
+        theme: 'outline',
+        size:  'medium',
+        shape: 'pill',
+        ...params,
+      };
+      googleRef.accounts.id.renderButton(ctr, options);
+    }
+
+    function onetap() {
+      function _handle_prompt_events(evt) {
+        if (evt.isNotDisplayed()) {
+          if (evt.getNotDisplayedReason() === 'suppressed_by_user') {
+            _disable();
+            _notify('onetap_suppressed');
+          }
+        }
+        if (evt.isSkippedMoment()) {
+          _notify('onetap_suppressed');
+        }
+      }
+      googleRef.accounts.id.prompt(_handle_prompt_events);
+    }
+
+    function unobserve(cb) {
+      const idx = obs.indexOf(cb);
+      if (idx >= 0) {
+        obs.splice(idx, 1);
       }
     }
 
-    /***********************************************************************
-     * 4) SILENT RE-AUTH & BUTTON HANDLERS
-     ***********************************************************************/
-    // Attempt a silent re-auth first
-    function trySilentAuth() {
-      console.log('Attempting silent re-auth...');
-      tokenClient.callback = (resp) => {
-        if (resp.error) {
-          console.log('Silent re-auth failed:', resp.error);
-          // Fallback: show or require user consent
-          return;
+    function signout() {
+      _disable();
+      _notify('signout');
+    }
+
+    function revoke() {
+      if (!state.user?.email) {
+        _disable();
+        _notify('revoke');
+        return;
+      }
+      googleRef.accounts.id.revoke(state.user.email, done => {
+        _disable();
+        _notify('revoke');
+      });
+    }
+
+    function user() {
+      return state.user;
+    }
+
+    // Private:
+
+    function _disable() {
+      state.user = null;
+      window.localStorage.removeItem(`gothic-id`);
+      if (googleRef?.accounts?.id?.disableAutoSelect) {
+        googleRef.accounts.id.disableAutoSelect();
+      }
+    }
+
+    function _authorize() {
+      return new Promise((res, rej) => {
+        state.tok_client = googleRef.accounts.oauth2.initTokenClient({
+          client_id: state.cid,
+          scope: state.scope,
+          // "hint" tries to signal which account is in use:
+          hint: state.user?.email,
+          callback: (response) => {
+            if (!response.access_token) {
+              return rej('authorization-failed');
+            }
+            res();
+          }
+        });
+        // Attempt silent
+        state.tok_client.requestAccessToken({ prompt: '' });
+      });
+    }
+
+    function _load_libaries() {
+      let goog_ready = false;
+      let gapi_ready = false;
+
+      let pass, fail;
+      const ready = new Promise((res, rej) => {
+        pass = res;
+        fail = rej;
+      });
+
+      function _all_ready() {
+        if (goog_ready && gapi_ready) {
+          pass();
+          _notify('loaded');
         }
-        console.log('Silent re-auth succeeded!');
-        onAuthSuccess(resp.access_token);
-      };
+      }
 
-      // Attempt a token request with no prompt
-      tokenClient.requestAccessToken();
+      function _gapi_setup() {
+        gapiRef = window.gapi;
+        gapiRef.load('client', async() => {
+          await gapiRef.client.init({
+            apiKey: state.key,
+            discoveryDocs: [ state.discovery ]
+          });
+          gapi_ready = true;
+          _all_ready();
+        });
+      }
+
+      function _goog_ready() {
+        googleRef = window.google;
+        googleRef.accounts.id.initialize({
+          client_id: state.cid,
+          auto_select: true,
+          callback: _on_response
+        });
+        goog_ready = true;
+        _all_ready();
+      }
+
+      // 1) Load GIS
+      const googscr = document.createElement('script');
+      googscr.type = 'text/javascript';
+      googscr.src  = 'https://accounts.google.com/gsi/client';
+      googscr.defer = true;
+      googscr.onload  = _goog_ready;
+      googscr.onerror = fail;
+      document.head.appendChild(googscr);
+
+      // 2) Load GAPI
+      const gapiscr = document.createElement('script');
+      gapiscr.type = 'text/javascript';
+      gapiscr.src  = 'https://apis.google.com/js/api.js';
+      gapiscr.defer = true;
+      gapiscr.onload  = _gapi_setup;
+      gapiscr.onerror = fail;
+      document.head.appendChild(gapiscr);
+
+      return ready;
     }
 
-    // Called when user manually clicks "Authorize"
-    authorizeButton.onclick = () => {
-      doConsentAuth();
-    };
+    function _notify(type, user = null) {
+      obs.forEach(fn => fn(type, user));
+    }
 
-    // Show a consent prompt to the user
-    function doConsentAuth() {
-      console.log('Consent-based auth...');
-      tokenClient.callback = (resp) => {
-        if (resp.error) {
-          console.error('Consent auth failed:', resp.error);
-          return;
+    async function _on_response(r) {
+      state.user = null;
+      let event_type = 'unknown';
+
+      if (r && r.credential) {
+        try {
+          // decode JWT
+          const rawdata = jwt_decode(r.credential);
+          state.user = (({ email, family_name, given_name, picture, name }) =>
+              ({ email, family_name, given_name, picture, name }))(rawdata);
+
+          // Next, authorize with the token client to get an access token
+          await _authorize();
+
+          // Mark recognized
+          window.localStorage.setItem('gothic-id', 'loaded');
+          event_type = 'signin';
+        } catch (err) {
+          if (err === 'auth-failed') {
+            event_type = 'auth-failed';
+          } else {
+            console.error('Error in _on_response:', err);
+            event_type = 'error';
+          }
         }
-        console.log('Consent auth succeeded!');
-        onAuthSuccess(resp.access_token);
-      };
-
-      tokenClient.requestAccessToken();
+      }
+      _notify(event_type, state.user);
     }
 
-    // When we sign out
-    signoutButton.onclick = () => {
-      gapi.client.setToken(null);
-      authorizeButton.style.display = 'inline-block';
-      signoutButton.style.display   = 'none';
-      clearUI();
-    };
+    // -------------------------------------------------------------------
+    // END gothic.js
+    // -------------------------------------------------------------------
+  </script>
 
-    /***********************************************************************
-     * 5) ON AUTH SUCCESS
-     ***********************************************************************/
-    function onAuthSuccess(accessToken) {
-      // Set the token for GAPI
-      gapi.client.setToken({ access_token: accessToken });
+  <!--
+    3) Our main code that uses the "gothic" object.
+       We'll integrate Calendar & Sheets calls via the loaded gapiRef.
+  -->
+  <script type="module">
+    import gothic from './gothic.js';
+    // IMPORTANT: This import path assumes you've saved the above code in "gothic.js"
+    // next to index.html. If you instead keep it all inline in one file, remove this import
+    // and just refer to the "gothic" global or the exported object above.
 
-      // Update buttons
-      authorizeButton.style.display = 'none';
-      signoutButton.style.display   = 'inline-block';
+    // -----------------------
+    // CONFIG
+    // -----------------------
+    const CLIENT_ID = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
+    const CALENDAR_ID = '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com';
+    const SHEET_ID    = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
 
-      // Load both the calendar events and the sheet items
-      loadCalendarEvents();
-      loadSheetItems();
+    // If your sheet data is in 'Sheet1' column A only:
+    const SHEET_RANGE = 'Sheet1!A:A';
+
+    // Because we only want read-only:
+    const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
+
+    // Discovery doc for the Sheets & Calendar APIs:
+    const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
+    // We'll load the Sheets doc separately in the code below, or we can provide multiple discoveryDocs in an array.
+    // For simplicity, let's rely on the gothic library calling "discoveryDocs: [ state.discovery ]".
+    // That means if we only pass in one doc, we'll need to do a separate load for Sheets.
+    // Alternatively, you can pass a single array of multiple docs.
+    // We'll demonstrate a second approach below.
+
+    // If you want both docs at once, you can do:
+    // const DISCOVERY_DOCS = [
+    //   'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
+    //   'https://sheets.googleapis.com/$discovery/rest?version=v4'
+    // ];
+
+    // For now, let's keep it simple and only pass the calendar doc. We'll manually load Sheets in code after.
+
+    // We do NOT want an API key, so we'll pass an empty string for that argument.
+    const API_KEY = '';
+
+    // 1) Initialize gothic
+    gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
+
+    // 2) Observe events from gothic
+    gothic.observe(async (type, user) => {
+      console.log('[Gothic event]', type, user);
+
+      if (type === 'loaded') {
+        // Libraries loaded. Now we can render the sign-in button, etc.
+        gothic.button('signin-button-container');  // Renders the "Sign In" button
+      }
+      else if (type === 'signin') {
+        // We have a user and a valid access token. Let's load data now.
+        await loadSheetsClient();  // Make sure the Sheets discovery doc is loaded if needed
+        fetchCalendarEvents();
+        fetchSheetItems();
+      }
+      else if (type === 'signout' || type === 'revoke') {
+        clearUI();
+      }
+    });
+
+    // 3) Hook up sign-out and revoke buttons
+    const signoutButton = document.getElementById('signoutButton');
+    const revokeButton  = document.getElementById('revokeButton');
+
+    signoutButton.onclick = () => gothic.signout();
+    revokeButton.onclick  = () => gothic.revoke();
+
+    // 4) Load Sheets discovery doc if not already loaded by gothic
+    //    (Our current pass "discovery = calendar doc only". We'll load the Sheets doc here.)
+    async function loadSheetsClient() {
+      if (!window.gapi?.client?.sheets) {
+        // Must load the doc for Sheets
+        await window.gapi.client.load('sheets', 'v4');
+      }
     }
 
-    /***********************************************************************
-     * 6) FETCH CALENDAR EVENTS
-     ***********************************************************************/
-    async function loadCalendarEvents() {
+    // 5) Fetch Calendar Events
+    async function fetchCalendarEvents() {
       try {
-        const now     = new Date();
+        const now = new Date();
         const timeMin = now.toISOString();
 
-        // Next 6 days from now
-        const future  = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
-        // set end-of-day
+        const future = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
         future.setHours(23, 59, 59, 999);
         const timeMax = future.toISOString();
 
-        const response = await gapi.client.calendar.events.list({
+        const resp = await window.gapi.client.calendar.events.list({
           calendarId: CALENDAR_ID,
           timeMin,
           timeMax,
           singleEvents: true,
-          orderBy: 'startTime',
+          orderBy: 'startTime'
         });
-        const events = response.result.items || [];
+        const events = resp.result.items || [];
         renderCalendarEvents(events);
       } catch (err) {
-        console.error('Calendar API error:', err);
+        console.error('Calendar error:', err);
       }
     }
 
@@ -243,27 +411,25 @@
         ul.innerHTML = '<li>No upcoming events found.</li>';
         return;
       }
-      for (let event of events) {
-        const start = event.start.dateTime || event.start.date;
+      for (const ev of events) {
+        const start = ev.start.dateTime || ev.start.date;
         const li = document.createElement('li');
-        li.textContent = `${start} — ${event.summary}`;
+        li.textContent = `${start} — ${ev.summary}`;
         ul.appendChild(li);
       }
     }
 
-    /***********************************************************************
-     * 7) FETCH SHEET ITEMS
-     ***********************************************************************/
-    async function loadSheetItems() {
+    // 6) Fetch Sheet Items
+    async function fetchSheetItems() {
       try {
-        const resp = await gapi.client.sheets.spreadsheets.values.get({
+        const resp = await window.gapi.client.sheets.spreadsheets.values.get({
           spreadsheetId: SHEET_ID,
-          range: SHEET_RANGE,
+          range: SHEET_RANGE
         });
         const rows = resp.result.values || [];
         renderSheetItems(rows);
       } catch (err) {
-        console.error('Sheets API error:', err);
+        console.error('Sheets error:', err);
       }
     }
 
@@ -275,16 +441,15 @@
         return;
       }
       rows.forEach(row => {
-        const value = row[0]; // single column
-        if (value) {
+        const val = row[0];
+        if (val) {
           const li = document.createElement('li');
-          li.textContent = value;
+          li.textContent = val;
           ul.appendChild(li);
         }
       });
     }
 
-    // Clear the UI upon sign-out or if needed
     function clearUI() {
       document.getElementById('calendar-events').innerHTML = '';
       document.getElementById('sheet-items').innerHTML = '';
