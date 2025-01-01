@@ -161,7 +161,7 @@
       };
 
       // Attempt a token request with no prompt
-      tokenClient.requestAccessToken({ prompt: '' });
+      tokenClient.requestAccessToken();
     }
 
     // Called when user manually clicks "Authorize"
@@ -181,7 +181,7 @@
         onAuthSuccess(resp.access_token);
       };
 
-      tokenClient.requestAccessToken({ prompt: 'consent' });
+      tokenClient.requestAccessToken();
     }
 
     // When we sign out
