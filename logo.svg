@@ -1,0 +1,41 @@
+<svg
+    version="1.1"
+    width="120"
+    height="120"
+    viewBox="0 0 120 120"
+    xmlns="http://www.w3.org/2000/svg"
+>
+  <title>Cat Looking at Z</title>
+
+  <!-- Stylized cat on the left -->
+  <g id="cat" transform="translate(30, 40)">
+    <!-- Head -->
+    <circle cx="0" cy="0" r="8" fill="#000" />
+    <!-- Ears -->
+    <path d="M -6 -8 L -10 -14 L -2 -10 Z" fill="#000" />
+    <path d="M 6 -8 L 10 -14 L 2 -10 Z" fill="#000" />
+    <!-- Body -->
+    <ellipse cx="0" cy="15" rx="10" ry="15" fill="#000" />
+    <!-- Tail -->
+    <path
+      d="M 10,25 
+         C 15,25 20,30 15,35"
+      stroke="#000"
+      stroke-width="3"
+      fill="none"
+    />
+  </g>
+
+  <!-- Letter Z on the right -->
+  <text
+    x="70"
+    y="60"
+    font-size="36"
+    font-family="Arial"
+    fill="#000"
+    text-anchor="middle"
+    alignment-baseline="middle"
+  >
+    Z
+  </text>
+</svg>
