@@ -3,41 +3,46 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Calendar + Sheet (New GIS OAuth Only)</title>
+  <title>Calendar + Sheet (GIS OAuth with Silent Re-Auth)</title>
 
-  <!-- Some minimal styling for demo -->
+  <!-- Minimal styling -->
   <style>
     html, body {
-      margin: 0; padding: 0;
+      margin: 0;
+      padding: 0;
       height: 100%;
+      font-family: sans-serif;
       display: flex;
       flex-direction: column;
-      font-family: sans-serif;
     }
-    header, main {
+    header {
       padding: 1rem;
     }
-    #topHalf, #bottomHalf {
-      padding: 1rem;
+    button {
+      margin-right: 1rem;
     }
-    .split {
+    main {
       flex: 1;
       display: flex;
       flex-direction: column;
+      padding: 1rem;
+    }
+    #topHalf, #bottomHalf {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
     }
     ul { padding-left: 1.2rem; }
-    button { margin-right: 1rem; }
   </style>
 </head>
 <body>
-  <!-- Buttons for sign-in and sign-out -->
+  <!-- Header with optional manual Auth buttons -->
   <header>
-    <button id="authorize_button" disabled>Authorize</button>
-    <button id="signout_button" disabled>Sign Out</button>
+    <button id="authorizeButton" disabled>Authorize</button>
+    <button id="signoutButton" disabled>Sign Out</button>
   </header>
 
-  <!-- Main content: top half (Calendar), bottom half (Sheets) -->
-  <main class="split">
+  <main>
     <div id="topHalf">
       <h2>Calendar (Today + Next 6 Days)</h2>
       <ul id="calendar-events"></ul>
@@ -49,154 +54,182 @@
   </main>
 
   <!--
-    1) Load the Google Identity Services library.
-       onload="gisLoaded()" => calls our gisLoaded() function.
+    1) Google Identity Services (GIS) library for OAuth
+       We'll call gisLoaded() once it's loaded.
   -->
-  <script src="https://accounts.google.com/gsi/client" onload="gisLoaded()" async defer></script>
+  <script
+    src="https://accounts.google.com/gsi/client"
+    async defer
+    onload="gisLoaded()">
+  </script>
 
   <!--
-    2) Load the GAPI client library for calling Sheets/Calendar.
-       onload="gapiLoaded()" => calls our gapiLoaded() function.
+    2) Google API Client library (for Sheets/Calendar)
+       We'll call gapiLoaded() once it's loaded.
   -->
-  <script src="https://apis.google.com/js/api.js" onload="gapiLoaded()" async defer></script>
+  <script
+    src="https://apis.google.com/js/api.js"
+    async defer
+    onload="gapiLoaded()">
+  </script>
 
   <script>
-    /**********************************************************************
+    /***********************************************************************
      * 1) CONFIGURATION
-     **********************************************************************/
-    // Your OAuth 2.0 Client ID from Google Cloud Console
-    const CLIENT_ID = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
-
-    // Scopes we need: read-only for Calendar and Sheets
-    const SCOPES = [
-      'https://www.googleapis.com/auth/calendar.readonly',
-      'https://www.googleapis.com/auth/spreadsheets.readonly',
-    ].join(' ');
-
-    // IDs for your Calendar and Sheet
+     ***********************************************************************/
+    // Provided by you:
+    const CLIENT_ID   = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
     const CALENDAR_ID = '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com';
     const SHEET_ID    = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
-    // The range in your Sheet you want (e.g. Sheet1!A:A)
+
+    // If your sheet data is in 'Sheet1' column A:
     const SHEET_RANGE = 'Sheet1!A:A';
 
-    /**********************************************************************
+    // OAuth scopes needed for reading Calendar and Sheets
+    const SCOPES = [
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/spreadsheets.readonly'
+    ].join(' ');
+
+    /***********************************************************************
      * 2) GLOBALS
-     **********************************************************************/
-    let tokenClient;       // will hold the GIS token client
-    let gapiInited   = false; // track if gapi client is fully loaded
-    let gisInited    = false; // track if GIS library is fully loaded
+     ***********************************************************************/
+    let tokenClient;    // GIS token client
+    let gapiInited = false;
+    let gisInited  = false;
 
-    // Grab references to our buttons
-    const authorizeButton = document.getElementById('authorize_button');
-    const signoutButton   = document.getElementById('signout_button');
+    // UI elements
+    const authorizeButton = document.getElementById('authorizeButton');
+    const signoutButton   = document.getElementById('signoutButton');
 
-    /**********************************************************************
-     * 3) INITIAL SETUP: LOADING GAPI + GIS LIBRARIES
-     **********************************************************************/
+    /***********************************************************************
+     * 3) LOADING THE GAPI & GIS LIBRARIES
+     ***********************************************************************/
     // Called once the "apis.google.com/js/api.js" script loads
     function gapiLoaded() {
       gapi.load('client', initializeGapiClient);
     }
 
-    // Initialize the GAPI client after loading
+    // After GAPI loads, initialize the client (no API key, just discovery docs)
     async function initializeGapiClient() {
-      // We do NOT supply apiKey because we rely entirely on OAuth tokens
       await gapi.client.init({
-        // Discovery docs for the APIs we want
         discoveryDocs: [
-          'https://sheets.googleapis.com/$discovery/rest?version=v4',
           'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
+          'https://sheets.googleapis.com/$discovery/rest?version=v4'
         ],
       });
       gapiInited = true;
-      maybeEnableButtons();
+      maybeEnableAuth();
     }
 
-    // Called once the "accounts.google.com/gsi/client" script loads
+    // Called once the GIS script loads
     function gisLoaded() {
-      // Initialize the token client
       tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
-        callback: '', // will set later
+        callback: (resp) => {
+          // This callback is dynamically replaced before each token request
+        },
       });
       gisInited = true;
-      maybeEnableButtons();
+      maybeEnableAuth();
     }
 
-    // Enable the "Authorize" button only when both libraries have inited
-    function maybeEnableButtons() {
+    // Enable the "Authorize" button if both libraries are ready
+    function maybeEnableAuth() {
       if (gapiInited && gisInited) {
         authorizeButton.disabled = false;
+        // Attempt silent re-auth on page load
+        trySilentAuth();
       }
     }
 
-    /**********************************************************************
-     * 4) AUTH / SIGN-IN FLOW (NEW GIS)
-     **********************************************************************/
-    authorizeButton.onclick = () => {
-      // Request an access token (prompt user for consent if needed)
-      tokenClient.callback = async (resp) => {
+    /***********************************************************************
+     * 4) SILENT RE-AUTH & BUTTON HANDLERS
+     ***********************************************************************/
+    // Attempt a silent re-auth first
+    function trySilentAuth() {
+      console.log('Attempting silent re-auth...');
+      tokenClient.callback = (resp) => {
         if (resp.error) {
-          console.error('OAuth token error:', resp);
-          throw(resp);
+          console.log('Silent re-auth failed:', resp.error);
+          // Fallback: show or require user consent
+          return;
         }
-        // Now we have an access token!
-        console.log('Access token acquired:', resp);
-
-        // Set GAPI’s token so we can make requests
-        gapi.client.setToken({ access_token: resp.access_token });
-
-        // Hide the auth button, show the signout
-        authorizeButton.style.display = 'none';
-        signoutButton.style.display   = 'inline-block';
-
-        // Now fetch the data
-        await loadCalendarEvents();
-        await loadSheetItems();
+        console.log('Silent re-auth succeeded!');
+        onAuthSuccess(resp.access_token);
       };
 
-      // Check if user already has a token
-      if (!gapi.client.getToken()) {
-        // No token, so request it (will show a consent screen or popup)
-        tokenClient.requestAccessToken({ prompt: 'consent' });
-      } else {
-        // Token exists; just use it
-        tokenClient.callback({}); // call our own callback
-      }
+      // Attempt a token request with no prompt
+      tokenClient.requestAccessToken({ prompt: '' });
+    }
+
+    // Called when user manually clicks "Authorize"
+    authorizeButton.onclick = () => {
+      doConsentAuth();
     };
 
+    // Show a consent prompt to the user
+    function doConsentAuth() {
+      console.log('Consent-based auth...');
+      tokenClient.callback = (resp) => {
+        if (resp.error) {
+          console.error('Consent auth failed:', resp.error);
+          return;
+        }
+        console.log('Consent auth succeeded!');
+        onAuthSuccess(resp.access_token);
+      };
+
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    // When we sign out
     signoutButton.onclick = () => {
-      // Clear GAPI’s token, hide data
       gapi.client.setToken(null);
       authorizeButton.style.display = 'inline-block';
       signoutButton.style.display   = 'none';
-
-      document.getElementById('calendar-events').innerHTML = '';
-      document.getElementById('sheet-items').innerHTML = '';
+      clearUI();
     };
 
-    /**********************************************************************
-     * 5) FETCH CALENDAR EVENTS
-     **********************************************************************/
+    /***********************************************************************
+     * 5) ON AUTH SUCCESS
+     ***********************************************************************/
+    function onAuthSuccess(accessToken) {
+      // Set the token for GAPI
+      gapi.client.setToken({ access_token: accessToken });
+
+      // Update buttons
+      authorizeButton.style.display = 'none';
+      signoutButton.style.display   = 'inline-block';
+
+      // Load both the calendar events and the sheet items
+      loadCalendarEvents();
+      loadSheetItems();
+    }
+
+    /***********************************************************************
+     * 6) FETCH CALENDAR EVENTS
+     ***********************************************************************/
     async function loadCalendarEvents() {
       try {
-        const now = new Date();
+        const now     = new Date();
         const timeMin = now.toISOString();
 
-        const future = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
+        // Next 6 days from now
+        const future  = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
+        // set end-of-day
         future.setHours(23, 59, 59, 999);
         const timeMax = future.toISOString();
 
-        const resp = await gapi.client.calendar.events.list({
+        const response = await gapi.client.calendar.events.list({
           calendarId: CALENDAR_ID,
           timeMin,
           timeMax,
           singleEvents: true,
           orderBy: 'startTime',
         });
-
-        const events = resp.result.items || [];
+        const events = response.result.items || [];
         renderCalendarEvents(events);
       } catch (err) {
         console.error('Calendar API error:', err);
@@ -204,24 +237,23 @@
     }
 
     function renderCalendarEvents(events) {
-      const listEl = document.getElementById('calendar-events');
-      listEl.innerHTML = '';
-
+      const ul = document.getElementById('calendar-events');
+      ul.innerHTML = '';
       if (!events.length) {
-        listEl.innerHTML = '<li>No upcoming events.</li>';
+        ul.innerHTML = '<li>No upcoming events found.</li>';
         return;
       }
       for (let event of events) {
         const start = event.start.dateTime || event.start.date;
         const li = document.createElement('li');
         li.textContent = `${start} — ${event.summary}`;
-        listEl.appendChild(li);
+        ul.appendChild(li);
       }
     }
 
-    /**********************************************************************
-     * 6) FETCH SHEET ITEMS
-     **********************************************************************/
+    /***********************************************************************
+     * 7) FETCH SHEET ITEMS
+     ***********************************************************************/
     async function loadSheetItems() {
       try {
         const resp = await gapi.client.sheets.spreadsheets.values.get({
@@ -236,21 +268,26 @@
     }
 
     function renderSheetItems(rows) {
-      const listEl = document.getElementById('sheet-items');
-      listEl.innerHTML = '';
-
+      const ul = document.getElementById('sheet-items');
+      ul.innerHTML = '';
       if (!rows.length) {
-        listEl.innerHTML = '<li>No items found.</li>';
+        ul.innerHTML = '<li>No items found.</li>';
         return;
       }
-      for (const row of rows) {
-        const val = row[0]; // single column
-        if (val) {
+      rows.forEach(row => {
+        const value = row[0]; // single column
+        if (value) {
           const li = document.createElement('li');
-          li.textContent = val;
-          listEl.appendChild(li);
+          li.textContent = value;
+          ul.appendChild(li);
         }
-      }
+      });
+    }
+
+    // Clear the UI upon sign-out or if needed
+    function clearUI() {
+      document.getElementById('calendar-events').innerHTML = '';
+      document.getElementById('sheet-items').innerHTML = '';
     }
   </script>
 </body>
