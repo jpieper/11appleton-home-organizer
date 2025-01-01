@@ -24,18 +24,27 @@
       flex-direction: column;
       padding: 1rem;
     }
-    #topHalf, #bottomHalf {
+
+    /* The "top half" for calendar */
+    #topHalf {
       flex: 1;
       overflow-y: auto;
       padding: 1rem;
       border: 1px solid #ccc;
       margin-bottom: 1rem;
     }
+    /* The "bottom half" for sheets */
+    #bottomHalf {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      border: 1px solid #ccc;
+    }
 
-    /* Table layout for the 7-day columns */
+    /* TABLE LAYOUT FOR CALENDAR (7 columns) */
     table {
       width: 100%;
-      table-layout: fixed;
+      table-layout: fixed; /* evenly spaced columns */
       border-collapse: collapse;
     }
     th, td {
@@ -44,7 +53,7 @@
       padding: 0.5rem;
     }
 
-    /* Colored box for each event */
+    /* Colored box for each event in the calendar */
     .event-box {
       background-color: #D8EAF8;  /* Light bluish background */
       border: 1px solid #8BBEE8;  /* Slightly darker border */
@@ -53,6 +62,18 @@
       padding: 0.25rem 0.5rem;
       font-size: 0.9rem;
       line-height: 1.2rem;
+    }
+
+    /* For the sheet data table at bottom */
+    #sheet-items table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+    #sheet-items th, #sheet-items td {
+      border: 1px solid #ccc;
+      padding: 0.5rem;
+      vertical-align: top;
     }
   </style>
 </head>
@@ -66,28 +87,24 @@
   <main>
     <div id="topHalf">
       <h2>Calendar (Today + Next 6 Days)</h2>
-      <!-- We replaced <ul id="calendar-events"> with a plain div -->
+      <!-- A container div for the calendar table -->
       <div id="calendar-events"></div>
     </div>
     <div id="bottomHalf">
-      <h2>Sheet Items (Single Column)</h2>
-      <ul id="sheet-items"></ul>
+      <h2>Sheet Items (Multi-Column with Headers)</h2>
+      <!-- A container div for the sheet data table -->
+      <div id="sheet-items"></div>
     </div>
   </main>
 
-  <!-- 1) jwt-decode from a CDN (so we can remove the import in gothic.js) -->
+  <!-- 1) jwt-decode from a CDN -->
   <script src="https://cdn.jsdelivr.net/npm/jwt-decode@3.1.2/build/jwt-decode.min.js"></script>
 
-  <!--
-    2) The entire gothic.js library, slightly modified to remove the "import jwt_decode" line.
-       We'll define a global "jwt_decode" from the script above.
-       Then we wrap the code in a <script type="module">, export default gothic, etc.
-  -->
+  <!-- 2) The entire gothic.js library (inline). We'll define "gothic". -->
   <script type="module">
-    // -------------------------------------------------------------------
-    // BEGIN gothic.js contents (with minor tweak: use global jwt_decode)
-    // -------------------------------------------------------------------
-
+    /***********************************************************************
+     * GOTHIC.JS START (slightly modified to use global jwt_decode)
+     ***********************************************************************/
     const state = {
       prev:      false,
       loaded:    false,
@@ -120,10 +137,8 @@
       state.key       = apiKey;
       state.scope     = scope;
       state.discovery = discovery;
-
       // If we have a localStorage marker, we assume we recognized them before.
-      state.prev = window.localStorage.getItem(`gothic-id`) ? true : false;
-
+      state.prev = window.localStorage.getItem('gothic-id') ? true : false;
       _load_libraries();
     }
 
@@ -133,6 +148,13 @@
 
     function observe(cb) {
       obs.push(cb);
+    }
+
+    function unobserve(cb) {
+      const idx = obs.indexOf(cb);
+      if (idx >= 0) {
+        obs.splice(idx, 1);
+      }
     }
 
     function button(parent_id, params = {}) {
@@ -165,13 +187,6 @@
       googleRef.accounts.id.prompt(_handle_prompt_events);
     }
 
-    function unobserve(cb) {
-      const idx = obs.indexOf(cb);
-      if (idx >= 0) {
-        obs.splice(idx, 1);
-      }
-    }
-
     function signout() {
       _disable();
       _notify('signout');
@@ -183,7 +198,7 @@
         _notify('revoke');
         return;
       }
-      googleRef.accounts.id.revoke(state.user.email, done => {
+      googleRef.accounts.id.revoke(state.user.email, () => {
         _disable();
         _notify('revoke');
       });
@@ -194,10 +209,9 @@
     }
 
     // Private:
-
     function _disable() {
       state.user = null;
-      window.localStorage.removeItem(`gothic-id`);
+      window.localStorage.removeItem('gothic-id');
       if (googleRef?.accounts?.id?.disableAutoSelect) {
         googleRef.accounts.id.disableAutoSelect();
       }
@@ -293,9 +307,9 @@
         try {
           const rawdata = jwt_decode(r.credential);
           state.user = (({ email, family_name, given_name, picture, name }) =>
-              ({ email, family_name, given_name, picture, name }))(rawdata);
-          await _authorize();
+            ({ email, family_name, given_name, picture, name }))(rawdata);
 
+          await _authorize();
           window.localStorage.setItem('gothic-id', 'loaded');
           event_type = 'signin';
         } catch (err) {
@@ -309,20 +323,21 @@
       }
       _notify(event_type, state.user);
     }
+    /***********************************************************************
+     * GOTHIC.JS END
+     ***********************************************************************/
 
-    // -------------------------------------------------------------------
-    // END gothic.js
-    // -------------------------------------------------------------------
-
-    // -----------------------
-    // CONFIG
-    // -----------------------
+    // --------------------------------------------------------------------
+    // CONFIG VALUES -- update as needed
+    // --------------------------------------------------------------------
     const CLIENT_ID = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
     const CALENDAR_ID = '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com';
     const SHEET_ID    = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
 
-    // If your sheet data is in 'Sheet1' column A only:
-    const SHEET_RANGE = 'Sheet1!A:A';
+    // Example: If your sheet covers columns A->C and at least 10 rows:
+    // 'Sheet1!A1:C10'
+    // Or you can just do 'Sheet1!A1:Z' if you want multiple columns
+    const SHEET_RANGE = 'Sheet1!A1:Z';
 
     // Because we only want read-only:
     const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
@@ -330,18 +345,23 @@
     // Discovery doc for the Calendar API (we load Sheets separately).
     const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 
-    // No API key needed, so empty string
+    // We do NOT want an API key, so empty string
     const API_KEY = '';
 
-    // Observe events from gothic
+
+    // --------------------------------------------------------------------
+    // GOTHIC APP LOGIC
+    // --------------------------------------------------------------------
     gothic.observe(async (type, user) => {
       console.log('[Gothic event]', type, user);
 
       if (type === 'loaded') {
-        // Libraries loaded. Now we can render the sign-in button or onetap
+        // Gothic libraries are loaded; show sign-in or attempt OneTap
         if (gothic.recognize()) {
+          // The user might be recognized; attempt OneTap
           gothic.onetap();
         } else {
+          // If not recognized, render an explicit sign-in button
           gothic.button('signin-button-container', {
             type: 'standard',
             size: 'large',
@@ -360,24 +380,26 @@
       }
     });
 
-    // 1) Initialize gothic
+    // Initialize gothic
     gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
 
-    // 3) Hook up sign-out and revoke buttons
-    const signoutButton = document.getElementById('signoutButton');
-    const revokeButton  = document.getElementById('revokeButton');
+    // Sign-out and revoke buttons
+    document.getElementById('signoutButton').onclick = () => gothic.signout();
+    document.getElementById('revokeButton').onclick  = () => gothic.revoke();
 
-    signoutButton.onclick = () => gothic.signout();
-    revokeButton.onclick  = () => gothic.revoke();
 
-    // 4) Load Sheets discovery doc if not already loaded
+    // --------------------------------------------------------------------
+    // 1) LOAD SHEETS CLIENT (if not already done)
+    // --------------------------------------------------------------------
     async function loadSheetsClient() {
       if (!window.gapi?.client?.sheets) {
         await window.gapi.client.load('sheets', 'v4');
       }
     }
 
-    // 5) Fetch Calendar Events
+    // --------------------------------------------------------------------
+    // 2) FETCH CALENDAR EVENTS
+    // --------------------------------------------------------------------
     async function fetchCalendarEvents() {
       try {
         const now = new Date();
@@ -402,33 +424,34 @@
     }
 
     /**
-     * Renders the next 7 days in a table, each day as a column.
-     * Events are shown in colored boxes with the format "7am - EventName".
+     * Renders the next 7 days in a table, with each day as a column.
+     * Events appear in colored boxes with "7am - EventName" or "All Day - EventName".
      */
     function renderCalendarEvents(events) {
       const container = document.getElementById('calendar-events');
-      container.innerHTML = ''; // Clear any existing content
+      container.innerHTML = ''; // Clear old content
 
-      // Prepare an array of the next 7 days (including today)
+      // Generate an array of 7 days (starting today)
       const days = [];
       const now = new Date();
-      now.setHours(0, 0, 0, 0); // midnight start
+      now.setHours(0, 0, 0, 0); // midnight
       for (let i = 0; i < 7; i++) {
         const d = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
         days.push(d);
       }
 
-      // Create a map from YYYY-MM-DD -> list of events
+      // Map: YYYY-MM-DD -> array of events
       const dayEventMap = {};
       for (const d of days) {
         const key = d.toISOString().split('T')[0]; // "YYYY-MM-DD"
         dayEventMap[key] = [];
       }
 
-      // Bucket each event into the right date
+      // Bucket events
       for (const ev of events) {
         const startStr = ev.start.dateTime || ev.start.date;
         const startDate = new Date(startStr);
+        // Zero out time to match the day key
         startDate.setHours(0, 0, 0, 0);
         const key = startDate.toISOString().split('T')[0];
         if (dayEventMap[key]) {
@@ -442,17 +465,15 @@
       // Table head
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
-
       days.forEach(d => {
         const th = document.createElement('th');
         th.textContent = d.toDateString(); // e.g. "Mon Apr 10 2023"
         headerRow.appendChild(th);
       });
-
       thead.appendChild(headerRow);
       table.appendChild(thead);
 
-      // Table body (a single row with 7 columns for the 7 days)
+      // Table body (just 1 row with 7 <td>)
       const tbody = document.createElement('tbody');
       const row = document.createElement('tr');
 
@@ -462,7 +483,7 @@
 
         const evs = dayEventMap[key];
         if (evs.length > 0) {
-          // Sort by actual dateTime if you like:
+          // Sort by time if you wish
           evs.sort((a, b) => {
             const aTime = new Date(a.start.dateTime || a.start.date).getTime();
             const bTime = new Date(b.start.dateTime || b.start.date).getTime();
@@ -473,28 +494,24 @@
             const box = document.createElement('div');
             box.className = 'event-box';
 
-            // Format: "7am - Event Title" or "All Day - Event Title"
-            const timeLabel = formatEventTime(ev);
+            const timeLabel = formatEventTime(ev); // e.g. "7am" or "All Day"
             box.textContent = `${timeLabel} - ${ev.summary}`;
-
             td.appendChild(box);
           });
         } else {
           td.textContent = 'No events';
         }
+
         row.appendChild(td);
       });
 
       tbody.appendChild(row);
       table.appendChild(tbody);
-
-      // Finally, insert the table into the container
       container.appendChild(table);
     }
 
     /**
-     * Returns a string like "7am" or "7:30am" if the event has a dateTime,
-     * otherwise "All Day" if it's just a date (all-day event).
+     * Convert event start dateTime to "7am" style or "All Day" if no dateTime.
      */
     function formatEventTime(ev) {
       if (ev.start && ev.start.dateTime) {
@@ -503,7 +520,7 @@
         const minutes = dt.getMinutes();
         const ampm = hour >= 12 ? 'pm' : 'am';
         hour = hour % 12;
-        if (hour === 0) hour = 12; // 12 AM / 12 PM
+        if (hour === 0) hour = 12;
         const minutesStr = minutes ? `:${String(minutes).padStart(2, '0')}` : '';
         return `${hour}${minutesStr}${ampm}`;
       } else {
@@ -511,7 +528,10 @@
       }
     }
 
-    // 6) Fetch Sheet Items
+
+    // --------------------------------------------------------------------
+    // 3) FETCH SHEET ITEMS
+    // --------------------------------------------------------------------
     async function fetchSheetItems() {
       try {
         const resp = await window.gapi.client.sheets.spreadsheets.values.get({
@@ -525,23 +545,56 @@
       }
     }
 
+    /**
+     * Renders sheet data in a table. The first row is headers, subsequent rows are data.
+     */
     function renderSheetItems(rows) {
-      const ul = document.getElementById('sheet-items');
-      ul.innerHTML = '';
+      const container = document.getElementById('sheet-items');
+      container.innerHTML = ''; // Clear old content
+
       if (!rows.length) {
-        ul.innerHTML = '<li>No items found.</li>';
+        container.textContent = 'No items found.';
         return;
       }
-      rows.forEach(row => {
-        const val = row[0];
-        if (val) {
-          const li = document.createElement('li');
-          li.textContent = val;
-          ul.appendChild(li);
-        }
+
+      // First row = headers
+      const headers = rows[0];
+      // Remaining rows = data
+      const dataRows = rows.slice(1);
+
+      // Build table
+      const table = document.createElement('table');
+
+      // Thead
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      headers.forEach(hdr => {
+        const th = document.createElement('th');
+        th.textContent = hdr ?? '';
+        headerRow.appendChild(th);
       });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      // Tbody
+      const tbody = document.createElement('tbody');
+      dataRows.forEach(row => {
+        const tr = document.createElement('tr');
+        row.forEach(cellVal => {
+          const td = document.createElement('td');
+          td.textContent = cellVal ?? '';
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+
+      container.appendChild(table);
     }
 
+    // --------------------------------------------------------------------
+    // HELPER: CLEAR THE UI
+    // --------------------------------------------------------------------
     function clearUI() {
       document.getElementById('calendar-events').innerHTML = '';
       document.getElementById('sheet-items').innerHTML = '';
