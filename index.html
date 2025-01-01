@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Calendar + Sheet (OAuth Only)</title>
+
+  <!-- Load Google API client library -->
+  <script src="https://apis.google.com/js/api.js"></script>
+
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      height: 100%;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+    #topHalf, #bottomHalf {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+    #authorize_button, #signout_button {
+      margin: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <!-- Sign-in / Sign-out UI -->
+  <button id="authorize_button" style="display: none;">Authorize</button>
+  <button id="signout_button" style="display: none;">Sign Out</button>
+
+  <div id="topHalf">
+    <h2>Calendar (Today + Next 6 Days)</h2>
+    <ul id="calendar-events"></ul>
+  </div>
+
+  <div id="bottomHalf">
+    <h2>Sheet Items (Single Column)</h2>
+    <ul id="sheet-items"></ul>
+  </div>
+
+  <script type="module">
+    /**********************************************************
+     * 1) CONFIGURATION
+     **********************************************************/
+    const CLIENT_ID     = 'YOUR_CLIENT_ID.apps.googleusercontent.com';
+    const CALENDAR_ID   = 'YOUR_CALENDAR_ID';
+    const SHEET_ID      = 'YOUR_SHEET_ID';
+    // If your sheet is in "Sheet1" and column A holds the items:
+    const SHEET_RANGE   = 'Sheet1!A:A';
+
+    // Read-only scopes for Calendar and Sheets
+    const SCOPES = [
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/spreadsheets.readonly'
+    ].join(' ');
+
+    let authorizeButton = document.getElementById('authorize_button');
+    let signoutButton   = document.getElementById('signout_button');
+
+    /**********************************************************
+     * 2) LOAD & INIT GAPI CLIENT
+     **********************************************************/
+    gapi.load('client:auth2', initClient);
+
+    function initClient() {
+      gapi.client.init({
+        // No apiKey here, only the OAuth client ID and scopes
+        clientId: CLIENT_ID,
+        discoveryDocs: [
+          'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
+          'https://sheets.googleapis.com/$discovery/rest?version=v4'
+        ],
+        scope: SCOPES
+      }).then(() => {
+        // Check sign-in state
+        const authInstance = gapi.auth2.getAuthInstance();
+        authInstance.isSignedIn.listen(updateSigninStatus);
+        updateSigninStatus(authInstance.isSignedIn.get());
+
+        // Button handlers
+        authorizeButton.onclick = () => authInstance.signIn();
+        signoutButton.onclick   = () => authInstance.signOut();
+      });
+    }
+
+    /**********************************************************
+     * 3) SIGN-IN STATE
+     **********************************************************/
+    function updateSigninStatus(isSignedIn) {
+      if (isSignedIn) {
+        authorizeButton.style.display = 'none';
+        signoutButton.style.display   = 'inline-block';
+
+        loadCalendarEvents();
+        loadSheetItems();
+      } else {
+        authorizeButton.style.display = 'inline-block';
+        signoutButton.style.display   = 'none';
+
+        // Optionally clear out old data
+        document.getElementById('calendar-events').innerHTML = '';
+        document.getElementById('sheet-items').innerHTML = '';
+      }
+    }
+
+    /**********************************************************
+     * 4) LOAD CALENDAR EVENTS (Next 7 Days)
+     **********************************************************/
+    async function loadCalendarEvents() {
+      const now = new Date();
+      const timeMin = now.toISOString();
+
+      // 6 days from now, plus the current day = 7 total
+      const future = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
+      future.setHours(23, 59, 59, 999);
+      const timeMax = future.toISOString();
+
+      try {
+        const response = await gapi.client.calendar.events.list({
+          calendarId: CALENDAR_ID,
+          timeMin,
+          timeMax,
+          showDeleted: false,
+          singleEvents: true,
+          orderBy: 'startTime',
+        });
+        const events = response.result.items || [];
+        renderCalendarEvents(events);
+      } catch (err) {
+        console.error('Calendar error:', err);
+      }
+    }
+
+    function renderCalendarEvents(events) {
+      const listEl = document.getElementById('calendar-events');
+      listEl.innerHTML = '';
+
+      if (!events.length) {
+        listEl.innerHTML = '<li>No upcoming events found.</li>';
+        return;
+      }
+
+      events.forEach(event => {
+        const start = event.start.dateTime || event.start.date;
+        const li = document.createElement('li');
+        li.textContent = `${start} — ${event.summary}`;
+        listEl.appendChild(li);
+      });
+    }
+
+    /**********************************************************
+     * 5) LOAD SHEET ITEMS (Single Column)
+     **********************************************************/
+    async function loadSheetItems() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: SHEET_ID,
+          range: SHEET_RANGE,
+        });
+        const rows = response.result.values || [];
+        renderSheetItems(rows);
+      } catch (err) {
+        console.error('Sheets error:', err);
+      }
+    }
+
+    function renderSheetItems(rows) {
+      const listEl = document.getElementById('sheet-items');
+      listEl.innerHTML = '';
+
+      if (!rows.length) {
+        listEl.innerHTML = '<li>No items found.</li>';
+        return;
+      }
+
+      rows.forEach(row => {
+        const value = row[0];
+        if (value) {
+          const li = document.createElement('li');
+          li.textContent = value;
+          listEl.appendChild(li);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
