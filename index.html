@@ -335,16 +335,17 @@
     // We do NOT want an API key, so we'll pass an empty string for that argument.
     const API_KEY = '';
 
-    // 1) Initialize gothic
-    gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
-
     // 2) Observe events from gothic
     gothic.observe(async (type, user) => {
       console.log('[Gothic event]', type, user);
 
       if (type === 'loaded') {
         // Libraries loaded. Now we can render the sign-in button, etc.
-        gothic.button('signin-button-container');  // Renders the "Sign In" button
+        if (gothic.recognize()) {
+          gothic.onetap();
+        } else {
+          gothic.button('signin', {type: 'standard', size: 'large', text: 'signup_with'});
+        }
       }
       else if (type === 'signin') {
         // We have a user and a valid access token. Let's load data now.
@@ -356,6 +357,9 @@
         clearUI();
       }
     });
+
+    // 1) Initialize gothic
+    gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
 
     // 3) Hook up sign-out and revoke buttons
     const signoutButton = document.getElementById('signoutButton');
