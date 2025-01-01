@@ -7,7 +7,8 @@
 
   <style>
     html, body {
-      margin: 0; padding: 0;
+      margin: 0;
+      padding: 0;
       height: 100%;
       font-family: sans-serif;
       display: flex;
@@ -30,7 +31,21 @@
       border: 1px solid #ccc;
       margin-bottom: 1rem;
     }
+
+    /* Remove default UL indentation, no longer used for calendar */
     ul { padding-left: 1.2rem; }
+
+    /* Make the table columns equally spaced */
+    table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: collapse;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      vertical-align: top;
+      padding: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -43,7 +58,8 @@
   <main>
     <div id="topHalf">
       <h2>Calendar (Today + Next 6 Days)</h2>
-      <ul id="calendar-events"></ul>
+      <!-- We replaced <ul id="calendar-events"> with a plain div -->
+      <div id="calendar-events"></div>
     </div>
     <div id="bottomHalf">
       <h2>Sheet Items (Single Column)</h2>
@@ -63,9 +79,6 @@
     // -------------------------------------------------------------------
     // BEGIN gothic.js contents (with minor tweak: use global jwt_decode)
     // -------------------------------------------------------------------
-
-    // We'll define "gothic" as an ES module export:
-    // (Removed the 'import jwt_decode from "jwt-decode";' line)
 
     const state = {
       prev:      false,
@@ -187,7 +200,6 @@
         state.tok_client = googleRef.accounts.oauth2.initTokenClient({
           client_id: state.cid,
           scope: state.scope,
-          // "hint" tries to signal which account is in use:
           hint: state.user?.email,
           callback: (response) => {
             if (!response.access_token) {
@@ -196,7 +208,6 @@
             res();
           }
         });
-        // Attempt silent
         state.tok_client.requestAccessToken({ prompt: '' });
       });
     }
@@ -272,15 +283,11 @@
 
       if (r && r.credential) {
         try {
-          // decode JWT
           const rawdata = jwt_decode(r.credential);
           state.user = (({ email, family_name, given_name, picture, name }) =>
               ({ email, family_name, given_name, picture, name }))(rawdata);
-
-          // Next, authorize with the token client to get an access token
           await _authorize();
 
-          // Mark recognized
           window.localStorage.setItem('gothic-id', 'loaded');
           event_type = 'signin';
         } catch (err) {
@@ -299,10 +306,6 @@
     // END gothic.js
     // -------------------------------------------------------------------
 
-    // IMPORTANT: This import path assumes you've saved the above code in "gothic.js"
-    // next to index.html. If you instead keep it all inline in one file, remove this import
-    // and just refer to the "gothic" global or the exported object above.
-
     // -----------------------
     // CONFIG
     // -----------------------
@@ -316,40 +319,31 @@
     // Because we only want read-only:
     const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
 
-    // Discovery doc for the Sheets & Calendar APIs:
+    // Discovery doc for the Calendar API (we load Sheets separately).
     const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-    // We'll load the Sheets doc separately in the code below, or we can provide multiple discoveryDocs in an array.
-    // For simplicity, let's rely on the gothic library calling "discoveryDocs: [ state.discovery ]".
-    // That means if we only pass in one doc, we'll need to do a separate load for Sheets.
-    // Alternatively, you can pass a single array of multiple docs.
-    // We'll demonstrate a second approach below.
 
-    // If you want both docs at once, you can do:
-    // const DISCOVERY_DOCS = [
-    //   'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
-    //   'https://sheets.googleapis.com/$discovery/rest?version=v4'
-    // ];
-
-    // For now, let's keep it simple and only pass the calendar doc. We'll manually load Sheets in code after.
-
-    // We do NOT want an API key, so we'll pass an empty string for that argument.
+    // No API key needed, so empty string
     const API_KEY = '';
 
-    // 2) Observe events from gothic
+    // Observe events from gothic
     gothic.observe(async (type, user) => {
       console.log('[Gothic event]', type, user);
 
       if (type === 'loaded') {
-        // Libraries loaded. Now we can render the sign-in button, etc.
+        // Libraries loaded. Now we can render the sign-in button or onetap
         if (gothic.recognize()) {
           gothic.onetap();
         } else {
-          gothic.button('signin', {type: 'standard', size: 'large', text: 'signup_with'});
+          gothic.button('signin-button-container', {
+            type: 'standard',
+            size: 'large',
+            text: 'signup_with'
+          });
         }
       }
       else if (type === 'signin') {
-        // We have a user and a valid access token. Let's load data now.
-        await loadSheetsClient();  // Make sure the Sheets discovery doc is loaded if needed
+        // We have a user and a valid access token. Let's load data.
+        await loadSheetsClient();
         fetchCalendarEvents();
         fetchSheetItems();
       }
@@ -368,11 +362,9 @@
     signoutButton.onclick = () => gothic.signout();
     revokeButton.onclick  = () => gothic.revoke();
 
-    // 4) Load Sheets discovery doc if not already loaded by gothic
-    //    (Our current pass "discovery = calendar doc only". We'll load the Sheets doc here.)
+    // 4) Load Sheets discovery doc if not already loaded
     async function loadSheetsClient() {
       if (!window.gapi?.client?.sheets) {
-        // Must load the doc for Sheets
         await window.gapi.client.load('sheets', 'v4');
       }
     }
@@ -401,19 +393,88 @@
       }
     }
 
+    /**
+     * Renders the next 7 days in a table, with each day as a column.
+     * Each column lists events (or "No events") for that day.
+     */
     function renderCalendarEvents(events) {
-      const ul = document.getElementById('calendar-events');
-      ul.innerHTML = '';
-      if (!events.length) {
-        ul.innerHTML = '<li>No upcoming events found.</li>';
-        return;
+      const container = document.getElementById('calendar-events');
+      container.innerHTML = ''; // Clear any existing content
+
+      // Prepare an array of the next 7 days (including today)
+      const days = [];
+      const now = new Date();
+      now.setHours(0, 0, 0, 0); // midnight start
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
+        days.push(d);
       }
+
+      // Create a map from YYYY-MM-DD -> list of events
+      const dayEventMap = {};
+      for (const d of days) {
+        const key = d.toISOString().split('T')[0]; // "YYYY-MM-DD"
+        dayEventMap[key] = [];
+      }
+
+      // Bucket each event into the right date
       for (const ev of events) {
-        const start = ev.start.dateTime || ev.start.date;
-        const li = document.createElement('li');
-        li.textContent = `${start} — ${ev.summary}`;
-        ul.appendChild(li);
+        const startStr = ev.start.dateTime || ev.start.date;
+        const startDate = new Date(startStr);
+        // Normalize to midnight for matching
+        startDate.setHours(0, 0, 0, 0);
+        const key = startDate.toISOString().split('T')[0];
+        if (dayEventMap[key]) {
+          dayEventMap[key].push(ev);
+        }
       }
+
+      // Build the table
+      const table = document.createElement('table');
+
+      // Table head
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+
+      days.forEach(d => {
+        const th = document.createElement('th');
+        th.textContent = d.toDateString(); // e.g. "Mon Apr 10 2023"
+        headerRow.appendChild(th);
+      });
+
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      // Table body (a single row with 7 columns for the 7 days)
+      const tbody = document.createElement('tbody');
+      const row = document.createElement('tr');
+
+      days.forEach(d => {
+        const key = d.toISOString().split('T')[0];
+        const td = document.createElement('td');
+
+        const evs = dayEventMap[key];
+        if (evs.length > 0) {
+          // Create a list of events
+          const ul = document.createElement('ul');
+          evs.forEach(ev => {
+            const li = document.createElement('li');
+            const start = ev.start.dateTime || ev.start.date;
+            li.textContent = `${start} — ${ev.summary}`;
+            ul.appendChild(li);
+          });
+          td.appendChild(ul);
+        } else {
+          td.textContent = 'No events';
+        }
+        row.appendChild(td);
+      });
+
+      tbody.appendChild(row);
+      table.appendChild(tbody);
+
+      // Finally, insert the table into the container
+      container.appendChild(table);
     }
 
     // 6) Fetch Sheet Items
