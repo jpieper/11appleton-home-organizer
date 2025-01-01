@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Gothic.js + Calendar/Sheets Example</title>
+  <title>Gothic.js + Calendar/Sheets Polling Example</title>
 
   <style>
     html, body {
@@ -371,9 +371,15 @@
       }
       else if (type === 'signin') {
         // We have a user and a valid access token. Let's load data.
-        await loadSheetsClient();
-        fetchCalendarEvents();
-        fetchSheetItems();
+        await loadSheetsClient();  // Make sure Sheets API is loaded
+        fetchCalendarEvents();     // Grab initial events
+        fetchSheetItems();         // Grab initial sheet data
+
+        // NEW: Start polling the sheet every 5 minutes (300,000 ms)
+        setInterval(() => {
+          console.log('Polling Sheets API for updates...');
+          fetchSheetItems();
+        }, 5 * 60 * 1000);
       }
       else if (type === 'signout' || type === 'revoke') {
         clearUI();
@@ -389,7 +395,7 @@
 
 
     // --------------------------------------------------------------------
-    // 1) LOAD SHEETS CLIENT (if not already done)
+    // 1) LOAD SHEETS CLIENT
     // --------------------------------------------------------------------
     async function loadSheetsClient() {
       if (!window.gapi?.client?.sheets) {
@@ -398,7 +404,8 @@
     }
 
     // --------------------------------------------------------------------
-    // 2) FETCH CALENDAR EVENTS
+    // 2) FETCH CALENDAR EVENTS (once initially if you want that also polled,
+    //    just do setInterval as well, like with sheets)
     // --------------------------------------------------------------------
     async function fetchCalendarEvents() {
       try {
@@ -483,7 +490,7 @@
 
         const evs = dayEventMap[key];
         if (evs.length > 0) {
-          // Sort by time if you wish
+          // Sort by time
           evs.sort((a, b) => {
             const aTime = new Date(a.start.dateTime || a.start.date).getTime();
             const bTime = new Date(b.start.dateTime || b.start.date).getTime();
