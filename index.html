@@ -32,10 +32,7 @@
       margin-bottom: 1rem;
     }
 
-    /* Remove default UL indentation, no longer used for calendar */
-    ul { padding-left: 1.2rem; }
-
-    /* Make the table columns equally spaced */
+    /* Table layout for the 7-day columns */
     table {
       width: 100%;
       table-layout: fixed;
@@ -45,6 +42,17 @@
       border: 1px solid #ccc;
       vertical-align: top;
       padding: 0.5rem;
+    }
+
+    /* Colored box for each event */
+    .event-box {
+      background-color: #D8EAF8;  /* Light bluish background */
+      border: 1px solid #8BBEE8;  /* Slightly darker border */
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+      padding: 0.25rem 0.5rem;
+      font-size: 0.9rem;
+      line-height: 1.2rem;
     }
   </style>
 </head>
@@ -116,7 +124,7 @@
       // If we have a localStorage marker, we assume we recognized them before.
       state.prev = window.localStorage.getItem(`gothic-id`) ? true : false;
 
-      _load_libaries();
+      _load_libraries();
     }
 
     function recognize() {
@@ -212,7 +220,7 @@
       });
     }
 
-    function _load_libaries() {
+    function _load_libraries() {
       let goog_ready = false;
       let gapi_ready = false;
 
@@ -394,8 +402,8 @@
     }
 
     /**
-     * Renders the next 7 days in a table, with each day as a column.
-     * Each column lists events (or "No events") for that day.
+     * Renders the next 7 days in a table, each day as a column.
+     * Events are shown in colored boxes with the format "7am - EventName".
      */
     function renderCalendarEvents(events) {
       const container = document.getElementById('calendar-events');
@@ -421,7 +429,6 @@
       for (const ev of events) {
         const startStr = ev.start.dateTime || ev.start.date;
         const startDate = new Date(startStr);
-        // Normalize to midnight for matching
         startDate.setHours(0, 0, 0, 0);
         const key = startDate.toISOString().split('T')[0];
         if (dayEventMap[key]) {
@@ -455,15 +462,23 @@
 
         const evs = dayEventMap[key];
         if (evs.length > 0) {
-          // Create a list of events
-          const ul = document.createElement('ul');
-          evs.forEach(ev => {
-            const li = document.createElement('li');
-            const start = ev.start.dateTime || ev.start.date;
-            li.textContent = `${start} — ${ev.summary}`;
-            ul.appendChild(li);
+          // Sort by actual dateTime if you like:
+          evs.sort((a, b) => {
+            const aTime = new Date(a.start.dateTime || a.start.date).getTime();
+            const bTime = new Date(b.start.dateTime || b.start.date).getTime();
+            return aTime - bTime;
           });
-          td.appendChild(ul);
+
+          evs.forEach(ev => {
+            const box = document.createElement('div');
+            box.className = 'event-box';
+
+            // Format: "7am - Event Title" or "All Day - Event Title"
+            const timeLabel = formatEventTime(ev);
+            box.textContent = `${timeLabel} - ${ev.summary}`;
+
+            td.appendChild(box);
+          });
         } else {
           td.textContent = 'No events';
         }
@@ -475,6 +490,25 @@
 
       // Finally, insert the table into the container
       container.appendChild(table);
+    }
+
+    /**
+     * Returns a string like "7am" or "7:30am" if the event has a dateTime,
+     * otherwise "All Day" if it's just a date (all-day event).
+     */
+    function formatEventTime(ev) {
+      if (ev.start && ev.start.dateTime) {
+        const dt = new Date(ev.start.dateTime);
+        let hour = dt.getHours();
+        const minutes = dt.getMinutes();
+        const ampm = hour >= 12 ? 'pm' : 'am';
+        hour = hour % 12;
+        if (hour === 0) hour = 12; // 12 AM / 12 PM
+        const minutesStr = minutes ? `:${String(minutes).padStart(2, '0')}` : '';
+        return `${hour}${minutesStr}${ampm}`;
+      } else {
+        return 'All Day';
+      }
     }
 
     // 6) Fetch Sheet Items
