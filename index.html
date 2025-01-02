@@ -398,12 +398,123 @@
     // 2) FETCH CALENDAR EVENTS
     // --------------------------------------------------------------------
     async function fetchCalendarEvents() {
-      // Your existing code to fetch & render 7-day events
-      // ...
+      try {
+        const now = new Date();
+        const timeMin = now.toISOString();
+
+        const future = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
+        future.setHours(23, 59, 59, 999);
+        const timeMax = future.toISOString();
+
+        const resp = await window.gapi.client.calendar.events.list({
+          calendarId: CALENDAR_ID,
+          timeMin,
+          timeMax,
+          singleEvents: true,
+          orderBy: 'startTime'
+        });
+        const events = resp.result.items || [];
+        renderCalendarEvents(events);
+      } catch (err) {
+        console.error('Calendar error:', err);
+      }
     }
 
-    function renderCalendarEvents(events) { /* ... */ }
-    function formatEventTime(ev) { /* ... */ }
+    function renderCalendarEvents(events) {
+      const container = document.getElementById('calendar-events');
+      container.innerHTML = ''; // Clear old content
+
+      // Generate an array of 7 days (starting today)
+      const days = [];
+      const now = new Date();
+      now.setHours(0, 0, 0, 0); // midnight
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
+        days.push(d);
+      }
+      // Map: YYYY-MM-DD -> array of events
+      const dayEventMap = {};
+      for (const d of days) {
+        const key = d.toISOString().split('T')[0]; // "YYYY-MM-DD"
+        dayEventMap[key] = [];
+      }
+      // Bucket events
+      for (const ev of events) {
+        const startStr = ev.start.dateTime || ev.start.date;
+        const startDate = new Date(startStr);
+        // Zero out time to match the day key
+        startDate.setHours(0, 0, 0, 0);
+        const key = startDate.toISOString().split('T')[0];
+        if (dayEventMap[key]) {
+          dayEventMap[key].push(ev);
+        }
+      }
+      // Build the table
+      const table = document.createElement('table');
+
+      // Table head
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      days.forEach(d => {
+        const th = document.createElement('th');
+        th.textContent = d.toDateString(); // e.g. "Mon Apr 10 2023"
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      // Table body (just 1 row with 7 <td>)
+      const tbody = document.createElement('tbody');
+      const row = document.createElement('tr');
+
+      days.forEach(d => {
+        const key = d.toISOString().split('T')[0];
+        const td = document.createElement('td');
+
+        const evs = dayEventMap[key];
+        if (evs.length > 0) {
+          // Sort by time
+          evs.sort((a, b) => {
+            const aTime = new Date(a.start.dateTime || a.start.date).getTime();
+            const bTime = new Date(b.start.dateTime || b.start.date).getTime();
+            return aTime - bTime;
+          });
+
+          evs.forEach(ev => {
+            const box = document.createElement('div');
+            box.className = 'event-box';
+
+            const timeLabel = formatEventTime(ev); // e.g. "7am" or "All Day"
+            box.textContent = `${timeLabel} - ${ev.summary}`;
+            td.appendChild(box);
+          });
+        } else {
+          td.textContent = 'No events';
+        }
+        row.appendChild(td);
+      });
+      tbody.appendChild(row);
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    /**
+     * Convert event start dateTime to "7am" style or "All Day" if no dateTime.
+     */
+    function formatEventTime(ev) {
+      if (ev.start && ev.start.dateTime) {
+        const dt = new Date(ev.start.dateTime);
+        let hour = dt.getHours();
+        const minutes = dt.getMinutes();
+        const ampm = hour >= 12 ? 'pm' : 'am';
+        hour = hour % 12;
+        if (hour === 0) hour = 12;
+        const minutesStr = minutes ? `:${String(minutes).padStart(2, '0')}` : '';
+        return `${hour}${minutesStr}${ampm}`;
+      } else {
+        return 'All Day';
+      }
+    }
 
     // --------------------------------------------------------------------
     // 3) FETCH SHEET ITEMS
