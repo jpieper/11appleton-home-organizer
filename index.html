@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Per-Cell Strike-Through, Column-Sorted (No Checkboxes for Empties)</title>
+  <title>Merged Calendar + Sheets</title>
 
   <style>
     html, body {
@@ -17,7 +17,6 @@
     header {
       padding: 1rem;
     }
-    button { margin-right: 1rem; }
     main {
       flex: 1;
       display: flex;
@@ -25,7 +24,7 @@
       padding: 1rem;
     }
 
-    /* The "top half" for calendar */
+    /* The "top half" for the merged calendar */
     #topHalf {
       flex: 1;
       overflow-y: auto;
@@ -53,10 +52,8 @@
       padding: 0.5rem;
     }
 
-    /* Colored box for each event in the calendar */
+    /* We'll override these colors inline for each calendar. */
     .event-box {
-      background-color: #D8EAF8;  /* Light bluish background */
-      border: 1px solid #8BBEE8;  /* Slightly darker border */
       border-radius: 4px;
       margin-bottom: 0.5rem;
       padding: 0.25rem 0.5rem;
@@ -76,7 +73,7 @@
       vertical-align: top;
     }
 
-    /* We'll apply this class to stricken text */
+    /* We'll apply this class to stricken text in the Sheet portion */
     .stricken {
       text-decoration: line-through;
       color: #999;
@@ -85,13 +82,13 @@
 </head>
 <body>
   <header>
-    <!-- Note: We have removed the Sign Out and Revoke buttons. -->
+    <!-- Removed the Sign Out and Revoke buttons -->
     <div id="signin-button-container" style="display:inline-block;"></div>
   </header>
 
   <main>
     <div id="topHalf">
-      <h2>Calendar (Today + Next 6 Days)</h2>
+      <h2>Calendar (Today + Next 6 Days, Merged)</h2>
       <div id="calendar-events"></div>
     </div>
     <div id="bottomHalf">
@@ -334,19 +331,35 @@
     // CONFIG VALUES
     // --------------------------------------------------------------------
     // NOTE the SCOPE is now '.../spreadsheets' (read-write), not 'readonly'
-    const CLIENT_ID = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
-    const CALENDAR_ID = '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com';
-    const SHEET_ID    = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
-    const SHEET_RANGE = 'Tasks!A1:Z';
-    const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.readonly'; // UPDATED
-    const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-    const API_KEY = '';
+    const CLIENT_ID    = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
+    const API_KEY      = '';
+    const SCOPES       = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.readonly';
+    const DISCOVERY    = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 
-    let activeSheetId = null; // We'll store the numeric sheetId for referencing in updates
+    // We'll track multiple calendars in an array, each with its own color scheme
+    const CALENDARS = [
+      {
+        id: '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com',
+        backgroundColor: '#D8EAF8',
+        borderColor: '#8BBEE8'
+      },
+      {
+        id: 'km9ikgpkljdeiccu25mlng56d0@group.calendar.google.com',
+        backgroundColor: '#FFEAB8',
+        borderColor: '#FFBB33'
+      }
+    ];
+
+    // Sheets config
+    const SHEET_ID     = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
+    const SHEET_RANGE  = 'Tasks!A1:Z';
+
+    let activeSheetId  = null; // We'll store the numeric sheetId for referencing in updates
 
     // --------------------------------------------------------------------
     // GOTHIC APP LOGIC
     // --------------------------------------------------------------------
+    import gothic from './gothic.js'; // (inlined above)
     gothic.observe(async (type, user) => {
       console.log('[Gothic event]', type, user);
 
@@ -385,10 +398,8 @@
       }
     });
 
-    // Load the library
+    // Initialize
     gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
-
-    // We have removed signout/revoke buttons from the DOM; no click handlers here.
 
     // --------------------------------------------------------------------
     // 1) LOAD SHEETS CLIENT
@@ -400,31 +411,50 @@
     }
 
     // --------------------------------------------------------------------
-    // 2) FETCH CALENDAR EVENTS
+    // 2) FETCH CALENDAR EVENTS (MERGED FROM MULTIPLE CALENDARS)
     // --------------------------------------------------------------------
     async function fetchCalendarEvents() {
       try {
-        const now = new Date();
+        // We'll gather events from each calendar,
+        // then combine them into a single array with color tags.
+        const now    = new Date();
         const timeMin = now.toISOString();
 
         const future = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
         future.setHours(23, 59, 59, 999);
         const timeMax = future.toISOString();
 
-        const resp = await window.gapi.client.calendar.events.list({
-          calendarId: CALENDAR_ID,
-          timeMin,
-          timeMax,
-          singleEvents: true,
-          orderBy: 'startTime'
-        });
-        const events = resp.result.items || [];
-        renderCalendarEvents(events);
+        const allEvents = [];
+
+        // Fetch each calendar's events
+        for (const cal of CALENDARS) {
+          const resp = await window.gapi.client.calendar.events.list({
+            calendarId: cal.id,
+            timeMin,
+            timeMax,
+            singleEvents: true,
+            orderBy: 'startTime'
+          });
+          const events = resp.result.items || [];
+          // Tag each event with the color scheme from this calendar
+          for (const ev of events) {
+            ev._bgColor = cal.backgroundColor;
+            ev._borderColor = cal.borderColor;
+          }
+          // Add to our global array
+          allEvents.push(...events);
+        }
+
+        // Now render them together in one table
+        renderCalendarEvents(allEvents);
       } catch (err) {
         console.error('Calendar error:', err);
       }
     }
 
+    /**
+     * Render all merged events into a single 7-day table.
+     */
     function renderCalendarEvents(events) {
       const container = document.getElementById('calendar-events');
       container.innerHTML = ''; // Clear old content
@@ -437,23 +467,26 @@
         const d = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
         days.push(d);
       }
+
       // Map: YYYY-MM-DD -> array of events
       const dayEventMap = {};
       for (const d of days) {
         const key = d.toISOString().split('T')[0]; // "YYYY-MM-DD"
         dayEventMap[key] = [];
       }
-      // Bucket events
+
+      // Bucket events by day
       for (const ev of events) {
-        const startStr = ev.start.dateTime || ev.start.date;
+        const startStr = ev.start.dateTime || ev.start.date; // "YYYY-MM-DD" or full dateTime
         const startDate = new Date(startStr);
-        // Zero out time to match the day key
+        // zero out time so we have a day-based key
         startDate.setHours(0, 0, 0, 0);
         const key = startDate.toISOString().split('T')[0];
         if (dayEventMap[key]) {
           dayEventMap[key].push(ev);
         }
       }
+
       // Build the table
       const table = document.createElement('table');
 
@@ -475,8 +508,8 @@
       days.forEach(d => {
         const key = d.toISOString().split('T')[0];
         const td = document.createElement('td');
+        const evs = dayEventMap[key] || [];
 
-        const evs = dayEventMap[key];
         if (evs.length > 0) {
           // Sort by time
           evs.sort((a, b) => {
@@ -489,15 +522,21 @@
             const box = document.createElement('div');
             box.className = 'event-box';
 
-            const timeLabel = formatEventTime(ev); // e.g. "7am" or "All Day"
+            // Apply calendar-specific colors
+            box.style.backgroundColor = ev._bgColor || '#EEE';
+            box.style.border = '1px solid ' + (ev._borderColor || '#CCC');
+
+            const timeLabel = formatEventTime(ev);
             box.textContent = `${timeLabel} - ${ev.summary}`;
             td.appendChild(box);
           });
         } else {
           td.textContent = 'No events';
         }
+
         row.appendChild(td);
       });
+
       tbody.appendChild(row);
       table.appendChild(tbody);
       container.appendChild(table);
