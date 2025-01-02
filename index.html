@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Per-Cell Strike-Through, Column-Sorted</title>
+  <title>Per-Cell Strike-Through, Column-Sorted (No Checkboxes for Empties)</title>
 
   <style>
     html, body {
@@ -717,18 +717,23 @@
           const td = document.createElement('td');
           const item = columns[j][i];
 
+          // If there's no item at this index, just leave blank
           if (!item) {
-            // If no item, it's just an empty cell
             tr.appendChild(td);
             continue;
           }
 
-          // If stricken
-          if (item.isStricken) {
+          // If the cell text is empty, just show a blank cell (no checkbox)
+          if (!item.text.trim()) {
+            td.textContent = '';
+          }
+          // If stricken, show stricken text (no checkbox)
+          else if (item.isStricken) {
             td.classList.add('stricken');
             td.textContent = item.text;
-          } else {
-            // Not stricken => show a checkbox
+          }
+          // Otherwise, show text + checkbox
+          else {
             const wrapper = document.createElement('div');
             const spanText = document.createElement('span');
             spanText.textContent = item.text;
@@ -747,6 +752,7 @@
             wrapper.appendChild(chk);
             td.appendChild(wrapper);
           }
+
           tr.appendChild(td);
         }
 
