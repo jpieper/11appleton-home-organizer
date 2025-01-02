@@ -359,6 +359,7 @@
     // --------------------------------------------------------------------
     // GOTHIC APP LOGIC
     // --------------------------------------------------------------------
+    import gothic from './gothic.js'; // (inlined above)
     gothic.observe(async (type, user) => {
       console.log('[Gothic event]', type, user);
 
@@ -585,7 +586,10 @@
         // rowData[0] is the header row
         const headers = parseHeaders(rowData);
         // transform the rest of the data into columns
-        const columns = parseIntoColumns(rowData);
+        let columns = parseIntoColumns(rowData);
+
+        // **Remove trailing empty rows** from columns
+        columns = removeTrailingEmptyRows(columns);
 
         // Sort each column so that non-stricken items come first
         columns.forEach(colArr => {
@@ -681,6 +685,50 @@
     }
 
     /**
+     * Remove trailing empty rows from the columns array.
+     * We find the highest row index i such that columns[c][i] has a non-empty text
+     * for any column c. Then we slice each column to i+1 length.
+     */
+    function removeTrailingEmptyRows(columns) {
+      let maxRowWithData = -1; // if it stays -1, that means no data at all
+
+      // columns[c] is an array of items: { rowIndex, colIndex, text, isStricken }
+      // we check from the top
+      const colCount = columns.length;
+      const maxLen = Math.max(...columns.map(col => col.length));
+
+      for (let i = 0; i < maxLen; i++) {
+        // Check if row i has data in ANY column
+        let hasData = false;
+        for (let c = 0; c < colCount; c++) {
+          // columns[c][i] might be undefined if the column is shorter
+          const item = columns[c][i];
+          if (item && item.text.trim().length > 0) {
+            hasData = true;
+            break;
+          }
+        }
+        if (hasData) {
+          // i is a row that has data
+          maxRowWithData = i;
+        }
+      }
+
+      // If maxRowWithData == -1 => no data at all, return empty
+      if (maxRowWithData === -1) {
+        return [];
+      }
+
+      // otherwise, slice each column to length (maxRowWithData + 1)
+      columns.forEach((col, idx) => {
+        // If col length is less than or equal to maxRowWithData+1, no harm
+        columns[idx] = col.slice(0, maxRowWithData + 1);
+      });
+
+      return columns;
+    }
+
+    /**
      * Apply strike-through to a single cell in Google Sheets
      */
     async function applyStrikethroughCell(rowIndex, colIndex) {
@@ -722,9 +770,7 @@
      * align with the original spreadsheet. This is intended behavior:
      * we’re grouping by column, then pushing stricken cells to the bottom.
      *
-     * Also, no checkboxes for empty cells.
-     *
-     * CHANGE: The checkbox now appears on the LEFT side of the text.
+     * Also, no checkboxes for empty cells, and checkboxes are on the LEFT side now.
      */
     function renderSheetItems(headers, columns) {
       const container = document.getElementById('sheet-items');
@@ -783,7 +829,7 @@
           else {
             const wrapper = document.createElement('div');
 
-            // Create the checkbox first
+            // Create the checkbox first (on left)
             const chk = document.createElement('input');
             chk.type = 'checkbox';
             chk.style.marginRight = '0.5rem'; // small spacing after the checkbox
