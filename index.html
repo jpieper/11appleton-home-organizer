@@ -485,7 +485,7 @@
 
     // NEW: function to apply strike-through to an entire row in Google Sheets
     async function applyStrikethroughRow(sheetRowIndex, columnCount) {
-      if (!activeSheetId) return;
+      if (activeSheetId == null) return;
 
       // This uses the "batchUpdate" method with a "repeatCell" request
       // to set "textFormat.strikethrough = true" across the row.
