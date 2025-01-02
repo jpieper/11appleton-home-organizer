@@ -1,34 +1,57 @@
-/***************************************
- * 1) IMPORT TASKS FROM CALENDAR
- *    - Parses event titles in the format "NAME: TASK".
- *    - If NAME includes multiple names (e.g. "Alice/Bob"),
- *      it splits them by '/' and adds the same task for each name.
- *    - Finds the correct column in the "Tasks" sheet by matching NAME
- *      to the header row, then places the TASK in the first empty row.
- *    - If no empty row is found, it inserts a new row. If insertion fails,
- *      it logs an error.
- ***************************************/
+/****************************************************
+ *  Setup / Utility
+ ****************************************************/
+
+/**
+ * Initializes script properties if they do not exist.
+ * Optional function to run manually once or as needed.
+ */
+function initLastImportTime() {
+  const props = PropertiesService.getScriptProperties();
+  // If "lastImportTime" not set, initialize to "now - 15 minutes"
+  if (!props.getProperty('lastImportTime')) {
+    const initialTime = new Date(Date.now() - 15 * 60 * 1000); // 15 min ago
+    props.setProperty('lastImportTime', initialTime.toISOString());
+  }
+  Logger.log('Initialized lastImportTime: ' + props.getProperty('lastImportTime'));
+}
+
+/****************************************************
+ *  1) Import Tasks From Calendar (No Race Condition)
+ ****************************************************/
 function importTasksFromCalendar() {
   // -- 1. Define your Calendar and Spreadsheet info
   const CALENDAR_ID = '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com';
   const SPREADSHEET_ID = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
   const TASKS_SHEET_NAME = 'Tasks';
 
-  // -- 2. Fetch recent events from the calendar
-  //    Adjust the time window as needed (e.g., last 15 minutes).
-  const now = new Date();
-  const timeWindowInMinutes = 15;
-  const startTime = new Date(now.getTime() - timeWindowInMinutes * 60 * 1000);
+  // -- 2. Use Script Properties to avoid the race condition
+  const props = PropertiesService.getScriptProperties();
+  let lastImportTimeString = props.getProperty('lastImportTime');
 
+  // If it doesn't exist yet, default to "now - 15 minutes"
+  if (!lastImportTimeString) {
+    // You could also call initLastImportTime() here automatically
+    const initialTime = new Date(Date.now() - 15 * 60 * 1000);
+    lastImportTimeString = initialTime.toISOString();
+    props.setProperty('lastImportTime', lastImportTimeString);
+    Logger.log('No lastImportTime found. Setting it to: ' + lastImportTimeString);
+  }
+
+  const lastImportTime = new Date(lastImportTimeString);
+  const now = new Date();
+
+  // (Optional) Add a small buffer if you want to ensure boundary events are included
+  // For example, fetch from lastImportTime - 1 minute to now + 1 minute
+  // then filter or deduplicate if needed. For simplicity, we do a direct range:
   const calendar = CalendarApp.getCalendarById(CALENDAR_ID);
-  const events = calendar.getEvents(startTime, now);
+  const events = calendar.getEvents(lastImportTime, now);
 
   // -- 3. Open the Spreadsheet and get the 'Tasks' sheet
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const tasksSheet = ss.getSheetByName(TASKS_SHEET_NAME);
 
   // -- 4. Get column headers (the first row in "Tasks")
-  //       This returns an array, e.g. ['Alice','Bob','Charlie',...]
   const headerValues = tasksSheet
     .getRange(1, 1, 1, tasksSheet.getLastColumn())
     .getValues()[0];
@@ -38,31 +61,34 @@ function importTasksFromCalendar() {
     const title = event.getTitle();
     const parts = title.split(':');
     if (parts.length === 2) {
-      // Parse out the "NAME" part (possibly multiple) and the "TASK"
       const namesPart = parts[0].trim();   // e.g. "Alice" or "Bob/Alice"
       const taskText  = parts[1].trim();   // e.g. "Buy groceries"
 
-      // Split names by '/' to handle multiple names
+      // If multiple names are separated by '/', handle each name
       const nameList = namesPart.split('/').map(n => n.trim()).filter(Boolean);
 
       // For each name in nameList, find the appropriate column
       nameList.forEach(name => {
         const colIndex = headerValues.indexOf(name) + 1;
         if (colIndex > 0) {
-          // Place the task text in the first empty row or in a new row
+          // Place the task text in the first empty row or a new row
           placeTaskInColumn(tasksSheet, colIndex, taskText);
         }
       });
     }
   });
+
+  // -- 6. Update lastImportTime to "now" to avoid re-importing these events
+  props.setProperty('lastImportTime', now.toISOString());
+  Logger.log('Updated lastImportTime to: ' + now);
 }
 
 
 /**
- * Helper function:
- * Tries to place 'taskText' into the first empty cell of 'colIndex' in tasksSheet.
- * If no empty cell is found, inserts a new row at the bottom. If insertion fails,
- * logs an error. IMPORTANT: Calls clearFormat() to ensure no leftover styling.
+ * Helper function to place 'taskText' into the first empty cell of 'colIndex'
+ * in tasksSheet. If no empty cell is found, inserts a new row at the bottom.
+ * If insertion fails, logs an error.
+ * Also ensures that no leftover strike/bold formatting remains.
  */
 function placeTaskInColumn(tasksSheet, colIndex, taskText) {
   const lastRow = tasksSheet.getLastRow();
@@ -85,28 +111,17 @@ function placeTaskInColumn(tasksSheet, colIndex, taskText) {
     tasksSheet.insertRowsAfter(lastRow, 1);
     const newRow = lastRow + 1;
     const newCell = tasksSheet.getRange(newRow, colIndex);
-    // Clear leftover formatting in the new row
     newCell.clearFormat();
-    // Place the task text
     newCell.setValue(taskText);
   } catch (e) {
-    // If insertion fails, log an error
     Logger.log('Failed to insert a new row for task "' + taskText + '": ' + e);
   }
 }
 
 
-/***************************************
- * 2) ARCHIVE COMPLETED (STRIKETHROUGH) TASKS
- *    - Runs at midnight via a time-based trigger.
- *    - For each cell in "Tasks" (excluding headers):
- *      a) If the cell is non-empty AND strikethrough => move to "Completed".
- *      b) Then remove the content and strikethrough from the "Tasks" cell.
- *      c) If cell is empty but strikethrough => just remove strikethrough.
- *    - The "Completed" sheet will get: [Date, Name, Task]
- *    - After archiving, we call condenseTasksSheet() to move all remaining
- *      tasks up so no blank spaces remain in each column.
- ***************************************/
+/****************************************************
+ *  2) ARCHIVE COMPLETED (STRIKETHROUGH) TASKS
+ ****************************************************/
 function archiveStrikethroughTasks() {
   // -- 1. Define your Spreadsheet info
   const SPREADSHEET_ID = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
@@ -145,10 +160,10 @@ function archiveStrikethroughTasks() {
           // Timestamp for when it's archived
           const timestamp = new Date();
 
-          // Append a new row in the "Completed" sheet: [Timestamp, Name, Task]
+          // Append a new row in "Completed" sheet: [Timestamp, Name, Task]
           completedSheet.appendRow([timestamp, headerName, cellValue]);
 
-          // Remove the old content and strikethrough style
+          // Remove content & formatting
           cell.clearContent();
           cell.clearFormat();
         }
@@ -165,35 +180,28 @@ function archiveStrikethroughTasks() {
 }
 
 
-/***************************************
- * 3) CONDENSE THE "Tasks" SHEET
- *    - For each column (excluding header row),
- *      shift all non-empty cells up so there are no blank cells in between.
- *    - Again, we call clearFormat() on the overwritten area to ensure
- *      no leftover strikethrough or other styling persists.
- ***************************************/
+/****************************************************
+ *  3) CONDENSE THE "Tasks" SHEET
+ ****************************************************/
 function condenseTasksSheet(sheet) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   if (lastRow < 2) return;
 
-  // Start from row 2 (since row 1 is headers) to lastRow
-  const numDataRows = lastRow - 1;
+  const numDataRows = lastRow - 1; // everything below header row
 
   for (let col = 1; col <= lastCol; col++) {
     // Grab column values from row 2 downward
     const colRange = sheet.getRange(2, col, numDataRows);
-    const colValues = colRange.getValues().map(r => r[0]); // Flatten from 2D to 1D array
+    const colValues = colRange.getValues().map(r => r[0]);
 
     // Filter out empty cells
     const nonEmptyValues = colValues.filter(value => value !== '');
 
     // Overwrite from row 2 down with these tasks
     if (nonEmptyValues.length > 0) {
-      // 1) Clear formatting in the target range so no strikethrough persists
-      sheet
-        .getRange(2, col, numDataRows)
-        .clearFormat();
+      // 1) Clear formatting in the whole range so no strikethrough persists
+      colRange.clearFormat();
 
       // 2) Write non-empty tasks, top down
       sheet
@@ -201,7 +209,7 @@ function condenseTasksSheet(sheet) {
         .setValues(nonEmptyValues.map(v => [v]));
     }
 
-    // Clear the remainder of the column below the used cells
+    // Clear out the remainder
     const remainder = numDataRows - nonEmptyValues.length;
     if (remainder > 0) {
       sheet
