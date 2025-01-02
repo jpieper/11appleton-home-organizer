@@ -59,9 +59,10 @@ function importTasksFromCalendar() {
 
 
 /**
- * Helper function to place 'taskText' into the first empty cell of 'colIndex'
- * in the tasksSheet. If no empty cell is found, inserts a new row at the bottom.
- * If insertion fails, logs an error.
+ * Helper function:
+ * Tries to place 'taskText' into the first empty cell of 'colIndex' in tasksSheet.
+ * If no empty cell is found, inserts a new row at the bottom. If insertion fails,
+ * logs an error. IMPORTANT: Calls clearFormat() to ensure no leftover styling.
  */
 function placeTaskInColumn(tasksSheet, colIndex, taskText) {
   const lastRow = tasksSheet.getLastRow();
@@ -70,8 +71,9 @@ function placeTaskInColumn(tasksSheet, colIndex, taskText) {
   for (let row = 2; row <= lastRow; row++) {
     const cell = tasksSheet.getRange(row, colIndex);
     if (!cell.getValue()) {
-      // If it's empty, remove any strikethrough just in case
-      cell.setTextStyle(SpreadsheetApp.newTextStyle().build());
+      // Clear leftover formatting in this cell
+      cell.clearFormat();
+      // Then put the task text in that cell
       cell.setValue(taskText);
       return; // done
     }
@@ -83,7 +85,9 @@ function placeTaskInColumn(tasksSheet, colIndex, taskText) {
     tasksSheet.insertRowsAfter(lastRow, 1);
     const newRow = lastRow + 1;
     const newCell = tasksSheet.getRange(newRow, colIndex);
-    newCell.setTextStyle(SpreadsheetApp.newTextStyle().build());
+    // Clear leftover formatting in the new row
+    newCell.clearFormat();
+    // Place the task text
     newCell.setValue(taskText);
   } catch (e) {
     // If insertion fails, log an error
@@ -133,7 +137,7 @@ function archiveStrikethroughTasks() {
       const isStrikethrough = cellStyle && cellStyle.isStrikethrough();
 
       if (isStrikethrough) {
-        // CASE A: Cell is NON-EMPTY and has strikethrough => archive it
+        // CASE A: Cell is NON-EMPTY => archive it
         if (cellValue) {
           // Grab column header (the "NAME")
           const headerName = tasksSheet.getRange(1, col).getValue();
@@ -146,11 +150,11 @@ function archiveStrikethroughTasks() {
 
           // Remove the old content and strikethrough style
           cell.clearContent();
-          cell.setTextStyle(SpreadsheetApp.newTextStyle().build());
+          cell.clearFormat();
         }
         // CASE B: Cell is EMPTY but has strikethrough => just remove strikethrough
         else {
-          cell.setTextStyle(SpreadsheetApp.newTextStyle().build());
+          cell.clearFormat();
         }
       }
     }
@@ -160,11 +164,14 @@ function archiveStrikethroughTasks() {
   condenseTasksSheet(tasksSheet);
 }
 
-/**
+
+/***************************************
  * 3) CONDENSE THE "Tasks" SHEET
  *    - For each column (excluding header row),
  *      shift all non-empty cells up so there are no blank cells in between.
- */
+ *    - Again, we call clearFormat() on the overwritten area to ensure
+ *      no leftover strikethrough or other styling persists.
+ ***************************************/
 function condenseTasksSheet(sheet) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
@@ -183,14 +190,15 @@ function condenseTasksSheet(sheet) {
 
     // Overwrite from row 2 down with these tasks
     if (nonEmptyValues.length > 0) {
-      // Write them starting at row 2
+      // 1) Clear formatting in the target range so no strikethrough persists
+      sheet
+        .getRange(2, col, numDataRows)
+        .clearFormat();
+
+      // 2) Write non-empty tasks, top down
       sheet
         .getRange(2, col, nonEmptyValues.length, 1)
         .setValues(nonEmptyValues.map(v => [v]));
-      // Optionally clear text style in those cells if you want them to be "fresh"
-      sheet
-        .getRange(2, col, nonEmptyValues.length, 1)
-        .setTextStyle(SpreadsheetApp.newTextStyle().build());
     }
 
     // Clear the remainder of the column below the used cells
@@ -199,7 +207,7 @@ function condenseTasksSheet(sheet) {
       sheet
         .getRange(2 + nonEmptyValues.length, col, remainder, 1)
         .clearContent()
-        .setTextStyle(SpreadsheetApp.newTextStyle().build());
+        .clearFormat();
     }
   }
 }
