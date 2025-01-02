@@ -382,11 +382,11 @@
         fetchCalendarEvents();
         fetchSheetItems();
 
-        // Poll the sheet every 1 minute
+        // Poll the sheet every 5 minutes
         setInterval(() => {
           console.log('Polling Sheets API for updates...');
           fetchSheetItems();
-        }, 60_000);
+        }, 5 * 60_000);
 
         // Poll the calendar every 15 minutes
         setInterval(() => {
