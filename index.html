@@ -359,6 +359,8 @@
     // --------------------------------------------------------------------
     // GOTHIC APP LOGIC
     // --------------------------------------------------------------------
+    // We have removed the import line since gothic is already inlined above.
+
     gothic.observe(async (type, user) => {
       console.log('[Gothic event]', type, user);
 
@@ -692,7 +694,6 @@
       let maxRowWithData = -1; // if it stays -1, that means no data at all
 
       // columns[c] is an array of items: { rowIndex, colIndex, text, isStricken }
-      // we check from the top
       const colCount = columns.length;
       const maxLen = Math.max(...columns.map(col => col.length));
 
@@ -700,7 +701,6 @@
         // Check if row i has data in ANY column
         let hasData = false;
         for (let c = 0; c < colCount; c++) {
-          // columns[c][i] might be undefined if the column is shorter
           const item = columns[c][i];
           if (item && item.text.trim().length > 0) {
             hasData = true;
@@ -708,7 +708,6 @@
           }
         }
         if (hasData) {
-          // i is a row that has data
           maxRowWithData = i;
         }
       }
@@ -720,7 +719,6 @@
 
       // otherwise, slice each column to length (maxRowWithData + 1)
       columns.forEach((col, idx) => {
-        // If col length is less than or equal to maxRowWithData+1, no harm
         columns[idx] = col.slice(0, maxRowWithData + 1);
       });
 
@@ -786,7 +784,6 @@
       // Thead
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
-      // Each column gets one header
       headers.forEach(h => {
         const th = document.createElement('th');
         th.textContent = h;
@@ -797,7 +794,6 @@
 
       // Tbody
       const tbody = document.createElement('tbody');
-      // find the max column length
       const maxLen = Math.max(...columns.map(col => col.length));
 
       // Each row i in the table -> the i-th item of each column
@@ -809,13 +805,12 @@
           const td = document.createElement('td');
           const item = columns[j][i];
 
-          // If there's no item at this index, just leave blank
           if (!item) {
             tr.appendChild(td);
             continue;
           }
 
-          // If the cell text is empty, just show a blank cell (no checkbox)
+          // If the cell text is empty, show a blank cell (no checkbox)
           if (!item.text.trim()) {
             td.textContent = '';
           }
@@ -828,22 +823,18 @@
           else {
             const wrapper = document.createElement('div');
 
-            // Create the checkbox first (on left)
             const chk = document.createElement('input');
             chk.type = 'checkbox';
-            chk.style.marginRight = '0.5rem'; // small spacing after the checkbox
+            chk.style.marginRight = '0.5rem';
             chk.addEventListener('change', async () => {
               console.log(`Striking out cell at row=${item.rowIndex}, col=${item.colIndex}`);
               await applyStrikethroughCell(item.rowIndex, item.colIndex);
-              // Re-fetch so we pick up new formatting & re-sort
-              await fetchSheetItems();
+              await fetchSheetItems(); // re-fetch to see updated formatting
             });
 
-            // Then the text
             const spanText = document.createElement('span');
             spanText.textContent = item.text;
 
-            // Append checkbox, then text
             wrapper.appendChild(chk);
             wrapper.appendChild(spanText);
             td.appendChild(wrapper);
