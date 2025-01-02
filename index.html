@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Strikethrough Detection Example</title>
+  <title>Strike-Through + Checkboxes Example</title>
 
   <style>
     html, body {
@@ -93,12 +93,10 @@
   <main>
     <div id="topHalf">
       <h2>Calendar (Today + Next 6 Days)</h2>
-      <!-- A container div for the calendar table -->
       <div id="calendar-events"></div>
     </div>
     <div id="bottomHalf">
-      <h2>Sheet Items (Multi-Column with Strike-Through Detection)</h2>
-      <!-- A container div for the sheet data table -->
+      <h2>Sheet Items (Check to Strike-Through)</h2>
       <div id="sheet-items"></div>
     </div>
   </main>
@@ -334,25 +332,18 @@
      ***********************************************************************/
 
     // --------------------------------------------------------------------
-    // CONFIG VALUES -- update as needed
+    // CONFIG VALUES
     // --------------------------------------------------------------------
+    // NOTE the SCOPE is now '.../spreadsheets' (read-write), not 'readonly'
     const CLIENT_ID = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
     const CALENDAR_ID = '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com';
     const SHEET_ID    = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
-
-    // This must match an actual tab name and columns in your sheet.
-    // Example: 'Tasks!A1:D' for columns A-D, all rows.
-    const SHEET_RANGE = 'Tasks!A1:Z';
-
-    // Because we only want read-only:
-    const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
-
-    // Discovery doc for the Calendar API (we load Sheets separately).
+    const SHEET_RANGE = 'Sheet1!A1:Z';
+    const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.readonly'; // UPDATED
     const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-
-    // We do NOT want an API key, so empty string
     const API_KEY = '';
 
+    let activeSheetId = null; // We'll store the numeric sheetId for applying strikethrough
 
     // --------------------------------------------------------------------
     // GOTHIC APP LOGIC
@@ -361,7 +352,6 @@
       console.log('[Gothic event]', type, user);
 
       if (type === 'loaded') {
-        // Gothic libraries are loaded; show sign-in or attempt OneTap
         if (gothic.recognize()) {
           gothic.onetap();
         } else {
@@ -374,25 +364,23 @@
       }
       else if (type === 'signin') {
         // We have a user and a valid token. Let's load data.
-        await loadSheetsClient();  // Make sure Sheets API is loaded
+        await loadSheetsClient();
         fetchCalendarEvents();
         fetchSheetItems();
 
-        // Start polling the sheet every 1 minute
+        // Poll the sheet every 1 minute
         setInterval(() => {
           console.log('Polling Sheets API for updates...');
           fetchSheetItems();
-        }, 1 * 60 * 1000);
+        }, 60_000);
       }
       else if (type === 'signout' || type === 'revoke') {
         clearUI();
       }
     });
 
-    // Initialize gothic
     gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
 
-    // Sign-out and revoke buttons
     document.getElementById('signoutButton').onclick = () => gothic.signout();
     document.getElementById('revokeButton').onclick  = () => gothic.revoke();
 
@@ -410,94 +398,68 @@
     // 2) FETCH CALENDAR EVENTS
     // --------------------------------------------------------------------
     async function fetchCalendarEvents() {
-      // ... (Same as before, omitted for brevity)
-      // Renders your 7-day table with colored boxes
+      // Your existing code to fetch & render 7-day events
+      // ...
     }
 
-    // (Same as before)
     function renderCalendarEvents(events) { /* ... */ }
     function formatEventTime(ev) { /* ... */ }
 
     // --------------------------------------------------------------------
-    // 3) FETCH SHEET ITEMS (Now using spreadsheets.get with includeGridData)
+    // 3) FETCH SHEET ITEMS
     // --------------------------------------------------------------------
     async function fetchSheetItems() {
       try {
-        // Instead of "spreadsheets.values.get", we use:
-        const resp = await window.gapi.client.sheets.spreadsheets.get({
+        const resp = await gapi.client.sheets.spreadsheets.get({
           spreadsheetId: SHEET_ID,
           ranges: [SHEET_RANGE],
           includeGridData: true
         });
 
-        // The response can contain multiple sheets. We'll assume
-        // the first sheet (resp.result.sheets[0]) and first range data[0].
+        // We'll assume the first sheet
         const sheet = resp.result.sheets[0];
-        if (!sheet?.data?.length) {
+        if (!sheet) {
           console.log('No sheet data found');
-          renderSheetItems([]); // empty
+          renderSheetItems([], []);
           return;
         }
 
-        // rowData array for the first range
-        const rowData = sheet.data[0].rowData || [];
-        // We'll parse the first row as headers, subsequent rows as data
+        // We need the numeric sheetId to apply formatting later
+        activeSheetId = sheet.properties.sheetId;
+
+        const rowData = sheet.data?.[0]?.rowData || [];
         const { headers, rows } = parseStrikethroughRows(rowData);
 
         // Sort so that stricken rows go last
         rows.sort((a, b) => {
-          // a.hasStrike is boolean -> convert to +1 or 0
           return (a.hasStrike === b.hasStrike) ? 0 : (a.hasStrike ? 1 : -1);
         });
 
-        // Render
         renderSheetItems(headers, rows);
       } catch (err) {
         console.error('Sheets error:', err);
       }
     }
 
-    /**
-     * parseStrikethroughRows(rowData):
-     *    rowData is an array of row objects (from Sheets API).
-     *    rowData[0] is the header row.
-     *    Each row has .values[], each value can have:
-     *       - .formattedValue for the text
-     *       - .effectiveFormat.textFormat.strikethrough
-     *       - or textFormatRuns[] for partial formatting
-     *
-     * returns { headers, rows }
-     *    headers: string[] from rowData[0]
-     *    rows: array of { cells: string[], hasStrike: boolean }
-     */
     function parseStrikethroughRows(rowData) {
-      if (!rowData.length) {
-        return { headers: [], rows: [] };
-      }
+      if (!rowData.length) return { headers: [], rows: [] };
 
-      // Parse header row (rowData[0])
       const headerCells = rowData[0].values || [];
       const headers = headerCells.map(cell => cell.formattedValue || '');
 
-      // The rest are data
       const dataRows = rowData.slice(1);
 
-      const rows = dataRows.map(r => {
+      const rows = dataRows.map((r, idx) => {
         const cells = r.values || [];
         let hasStrike = false;
         const cellTexts = cells.map(cell => {
-          // If there's no cell or no formattedValue, use empty string
           if (!cell) return '';
           const txt = cell.formattedValue || '';
 
-          // Check if strikethrough
-          // 1) If there's an effectiveFormat with textFormat
+          // Check strikethrough
           const tf = cell.effectiveFormat?.textFormat;
-          if (tf?.strikethrough) {
-            hasStrike = true;
-          }
-          // 2) If there are textFormatRuns, check each run
-          //    If ANY run has strikethrough => row is stricken
+          if (tf?.strikethrough) hasStrike = true;
+
           if (cell.textFormatRuns?.length) {
             for (const run of cell.textFormatRuns) {
               if (run.format?.strikethrough) {
@@ -506,11 +468,13 @@
               }
             }
           }
-
           return txt;
         });
 
+        // We'll store the row's 0-based index in the sheet data
+        // but remember row 0 is headers, so the actual row = idx+1
         return {
+          sheetRowIndex: idx + 1, // The actual row number in the sheet
           cells: cellTexts,
           hasStrike
         };
@@ -519,11 +483,39 @@
       return { headers, rows };
     }
 
-    /**
-     * renderSheetItems(headers, rows):
-     *   - headers: string[] from first row
-     *   - rows: array of { cells: string[], hasStrike: boolean }
-     */
+    // NEW: function to apply strike-through to an entire row in Google Sheets
+    async function applyStrikethroughRow(sheetRowIndex, columnCount) {
+      if (!activeSheetId) return;
+
+      // This uses the "batchUpdate" method with a "repeatCell" request
+      // to set "textFormat.strikethrough = true" across the row.
+      const requests = [{
+        repeatCell: {
+          range: {
+            sheetId: activeSheetId,
+            startRowIndex: sheetRowIndex,        // inclusive
+            endRowIndex: sheetRowIndex + 1,      // exclusive
+            startColumnIndex: 0,
+            endColumnIndex: columnCount          // up to your last column
+          },
+          cell: {
+            userEnteredFormat: {
+              textFormat: {
+                strikethrough: true
+              }
+            }
+          },
+          fields: "userEnteredFormat.textFormat.strikethrough"
+        }
+      }];
+
+      await gapi.client.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        resource: { requests }
+      });
+    }
+
+    // UPDATED: We'll add a "Done?" column for the checkbox in the UI
     function renderSheetItems(headers, rows) {
       const container = document.getElementById('sheet-items');
       container.innerHTML = '';
@@ -533,12 +525,19 @@
         return;
       }
 
-      // Build table
+      // We'll build a table with an extra first column "Done?"
       const table = document.createElement('table');
 
       // Thead
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
+
+      // Extra column for "Done?"
+      const thDone = document.createElement('th');
+      thDone.textContent = 'Done?';
+      headerRow.appendChild(thDone);
+
+      // Then the actual sheet headers
       headers.forEach(hdr => {
         const th = document.createElement('th');
         th.textContent = hdr;
@@ -551,14 +550,37 @@
       const tbody = document.createElement('tbody');
       rows.forEach(rowObj => {
         const tr = document.createElement('tr');
-        if (rowObj.hasStrike) {
-          tr.classList.add('stricken-row');
+
+        // 1) "Done?" cell
+        const tdDone = document.createElement('td');
+
+        if (!rowObj.hasStrike) {
+          // Render a checkbox for non-stricken rows
+          const chk = document.createElement('input');
+          chk.type = 'checkbox';
+          chk.addEventListener('change', async () => {
+            // Mark entire row as strikethrough in the sheet
+            const colCount = headers.length;
+            console.log(`Striking out row ${rowObj.sheetRowIndex}`);
+            await applyStrikethroughRow(rowObj.sheetRowIndex, colCount);
+            // Re-fetch so it sorts to the bottom, etc.
+            await fetchSheetItems();
+          });
+          tdDone.appendChild(chk);
+        } else {
+          // Already stricken, no checkbox
+          tr.classList.add('stricken-row'); // line-through styling
         }
+
+        tr.appendChild(tdDone);
+
+        // 2) Actual sheet columns
         rowObj.cells.forEach(cellVal => {
           const td = document.createElement('td');
           td.textContent = cellVal;
           tr.appendChild(td);
         });
+
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
@@ -566,9 +588,6 @@
       container.appendChild(table);
     }
 
-    // --------------------------------------------------------------------
-    // HELPER: CLEAR THE UI
-    // --------------------------------------------------------------------
     function clearUI() {
       document.getElementById('calendar-events').innerHTML = '';
       document.getElementById('sheet-items').innerHTML = '';
