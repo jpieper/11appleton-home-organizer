@@ -461,6 +461,7 @@
         renderCalendarEvents(allEvents);
       } catch (err) {
         console.error('Calendar error:', err);
+        window.location.reload();
       }
     }
 
@@ -615,6 +616,7 @@
         renderSheetItems(headers, columns);
       } catch (err) {
         console.error('Sheets error:', err);
+        window.location.reload();
       }
     }
 
