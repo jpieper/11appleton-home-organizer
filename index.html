@@ -337,7 +337,7 @@
     // Example: If your sheet covers columns A->C and at least 10 rows:
     // 'Sheet1!A1:C10'
     // Or you can just do 'Sheet1!A1:Z' if you want multiple columns
-    const SHEET_RANGE = 'Sheet1!A1:Z';
+    const SHEET_RANGE = 'Tasks!A1:Z';
 
     // Because we only want read-only:
     const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
@@ -375,11 +375,11 @@
         fetchCalendarEvents();     // Grab initial events
         fetchSheetItems();         // Grab initial sheet data
 
-        // NEW: Start polling the sheet every 5 minutes (300,000 ms)
+        // NEW: Start polling the sheet every 1 minute
         setInterval(() => {
           console.log('Polling Sheets API for updates...');
           fetchSheetItems();
-        }, 5 * 60 * 1000);
+        }, 1 * 60 * 1000);
       }
       else if (type === 'signout' || type === 'revoke') {
         clearUI();
