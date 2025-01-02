@@ -723,6 +723,8 @@
      * we’re grouping by column, then pushing stricken cells to the bottom.
      *
      * Also, no checkboxes for empty cells.
+     *
+     * CHANGE: The checkbox now appears on the LEFT side of the text.
      */
     function renderSheetItems(headers, columns) {
       const container = document.getElementById('sheet-items');
@@ -777,15 +779,14 @@
             td.classList.add('stricken');
             td.textContent = item.text;
           }
-          // Otherwise, show text + checkbox
+          // Otherwise, show checkbox + text
           else {
             const wrapper = document.createElement('div');
-            const spanText = document.createElement('span');
-            spanText.textContent = item.text;
-            spanText.style.marginRight = '0.5rem';
 
+            // Create the checkbox first
             const chk = document.createElement('input');
             chk.type = 'checkbox';
+            chk.style.marginRight = '0.5rem'; // small spacing after the checkbox
             chk.addEventListener('change', async () => {
               console.log(`Striking out cell at row=${item.rowIndex}, col=${item.colIndex}`);
               await applyStrikethroughCell(item.rowIndex, item.colIndex);
@@ -793,8 +794,13 @@
               await fetchSheetItems();
             });
 
-            wrapper.appendChild(spanText);
+            // Then the text
+            const spanText = document.createElement('span');
+            spanText.textContent = item.text;
+
+            // Append checkbox, then text
             wrapper.appendChild(chk);
+            wrapper.appendChild(spanText);
             td.appendChild(wrapper);
           }
 
