@@ -336,17 +336,20 @@
     const SCOPES       = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.readonly';
     const DISCOVERY    = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 
-    // We'll track multiple calendars in an array, each with its own color scheme
+    // We'll track multiple calendars in an array, each with its own color scheme,
+    // plus an "omitPastEvents" flag if we want to exclude past events from that calendar.
     const CALENDARS = [
       {
         id: '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com',
         backgroundColor: '#D8EAF8',
-        borderColor: '#8BBEE8'
+        borderColor: '#8BBEE8',
+        omitPastEvents: true    // do not include events that start before "now"
       },
       {
         id: 'km9ikgpkljdeiccu25mlng56d0@group.calendar.google.com',
         backgroundColor: '#FFEAB8',
-        borderColor: '#FFBB33'
+        borderColor: '#FFBB33',
+        omitPastEvents: false   // or omit this property entirely
       }
     ];
 
@@ -359,8 +362,6 @@
     // --------------------------------------------------------------------
     // GOTHIC APP LOGIC
     // --------------------------------------------------------------------
-    // We have removed the import line since gothic is already inlined above.
-
     gothic.observe(async (type, user) => {
       console.log('[Gothic event]', type, user);
 
@@ -418,10 +419,11 @@
       try {
         // We'll gather events from each calendar,
         // then combine them into a single array with color tags.
-        const now    = new Date();
+        const nowTime = Date.now();
+        const now     = new Date();
         const timeMin = now.toISOString();
 
-        const future = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
+        const future  = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
         future.setHours(23, 59, 59, 999);
         const timeMax = future.toISOString();
 
@@ -436,11 +438,20 @@
             singleEvents: true,
             orderBy: 'startTime'
           });
-          const events = resp.result.items || [];
-          // Tag each event with the color scheme from this calendar
+          let events = resp.result.items || [];
+
+          // If omitPastEvents is true, filter out events whose start is before "now"
+          if (cal.omitPastEvents) {
+            events = events.filter(ev => {
+              const start = new Date(ev.start.dateTime || ev.start.date).getTime();
+              return start >= nowTime;
+            });
+          }
+
+          // Tag each remaining event with the color scheme from this calendar
           for (const ev of events) {
-            ev._bgColor = cal.backgroundColor;
-            ev._borderColor = cal.borderColor;
+            ev._bgColor    = cal.backgroundColor;
+            ev._borderColor= cal.borderColor;
           }
           // Add to our global array
           allEvents.push(...events);
