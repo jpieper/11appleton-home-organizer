@@ -85,9 +85,8 @@
 </head>
 <body>
   <header>
+    <!-- Note: We have removed the Sign Out and Revoke buttons. -->
     <div id="signin-button-container" style="display:inline-block;"></div>
-    <button id="signoutButton">Sign Out</button>
-    <button id="revokeButton">Revoke</button>
   </header>
 
   <main>
@@ -373,17 +372,23 @@
           console.log('Polling Sheets API for updates...');
           fetchSheetItems();
         }, 60_000);
+
+        // Poll the calendar every 15 minutes
+        setInterval(() => {
+          console.log('Polling Calendar API for updates...');
+          fetchCalendarEvents();
+        }, 15 * 60_000);
+
       }
       else if (type === 'signout' || type === 'revoke') {
         clearUI();
       }
     });
 
+    // Load the library
     gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
 
-    document.getElementById('signoutButton').onclick = () => gothic.signout();
-    document.getElementById('revokeButton').onclick  = () => gothic.revoke();
-
+    // We have removed signout/revoke buttons from the DOM; no click handlers here.
 
     // --------------------------------------------------------------------
     // 1) LOAD SHEETS CLIENT
@@ -678,6 +683,8 @@
      * Because columns are sorted independently, the “rows” won’t
      * align with the original spreadsheet. This is intended behavior:
      * we’re grouping by column, then pushing stricken cells to the bottom.
+     *
+     * Also, no checkboxes for empty cells.
      */
     function renderSheetItems(headers, columns) {
       const container = document.getElementById('sheet-items');
