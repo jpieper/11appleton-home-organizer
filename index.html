@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Strike-Through + Checkboxes Example</title>
+  <title>Per-Cell Strike-Through, Column-Sorted</title>
 
   <style>
     html, body {
@@ -76,8 +76,8 @@
       vertical-align: top;
     }
 
-    /* We'll apply this to an entire row if it's stricken */
-    .stricken-row {
+    /* We'll apply this class to stricken text */
+    .stricken {
       text-decoration: line-through;
       color: #999;
     }
@@ -96,7 +96,7 @@
       <div id="calendar-events"></div>
     </div>
     <div id="bottomHalf">
-      <h2>Sheet Items (Check to Strike-Through)</h2>
+      <h2>Sheet Items — Per-Cell Strike & Sorted by Column</h2>
       <div id="sheet-items"></div>
     </div>
   </main>
@@ -343,7 +343,7 @@
     const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
     const API_KEY = '';
 
-    let activeSheetId = null; // We'll store the numeric sheetId for applying strikethrough
+    let activeSheetId = null; // We'll store the numeric sheetId for referencing in updates
 
     // --------------------------------------------------------------------
     // GOTHIC APP LOGIC
@@ -517,7 +517,7 @@
     }
 
     // --------------------------------------------------------------------
-    // 3) FETCH SHEET ITEMS
+    // 3) FETCH SHEET ITEMS & RENDER
     // --------------------------------------------------------------------
     async function fetchSheetItems() {
       try {
@@ -539,75 +539,118 @@
         activeSheetId = sheet.properties.sheetId;
 
         const rowData = sheet.data?.[0]?.rowData || [];
-        const { headers, rows } = parseStrikethroughRows(rowData);
+        // rowData[0] is the header row
+        const headers = parseHeaders(rowData);
+        // transform the rest of the data into columns
+        const columns = parseIntoColumns(rowData);
 
-        // Sort so that stricken rows go last
-        rows.sort((a, b) => {
-          return (a.hasStrike === b.hasStrike) ? 0 : (a.hasStrike ? 1 : -1);
+        // Sort each column so that non-stricken items come first
+        columns.forEach(colArr => {
+          colArr.sort((a, b) => {
+            // "false < true", so non-stricken (false) come first
+            if (a.isStricken === b.isStricken) return 0;
+            return a.isStricken ? 1 : -1;
+          });
         });
 
-        renderSheetItems(headers, rows);
+        renderSheetItems(headers, columns);
       } catch (err) {
         console.error('Sheets error:', err);
       }
     }
 
-    function parseStrikethroughRows(rowData) {
-      if (!rowData.length) return { headers: [], rows: [] };
-
+    /**
+     * Parse out the header row from rowData (rowData[0]).
+     */
+    function parseHeaders(rowData) {
+      if (!rowData.length) return [];
       const headerCells = rowData[0].values || [];
-      const headers = headerCells.map(cell => cell.formattedValue || '');
+      return headerCells.map(cell => cell.formattedValue || '');
+    }
 
+    /**
+     * Build an array-of-columns. Each column is an array of objects:
+     *   {
+     *     rowIndex: (0-based row in sheet, excluding header),
+     *     colIndex: (0-based column),
+     *     text: string,
+     *     isStricken: bool
+     *   }
+     *
+     * We skip row 0 because it's the header row. So the data rows start at row 1.
+     */
+    function parseIntoColumns(rowData) {
+      if (rowData.length <= 1) return []; // no data rows
       const dataRows = rowData.slice(1);
 
-      const rows = dataRows.map((r, idx) => {
+      // find maximum number of columns
+      let maxCols = 0;
+      for (const r of dataRows) {
         const cells = r.values || [];
-        let hasStrike = false;
-        const cellTexts = cells.map(cell => {
-          if (!cell) return '';
-          const txt = cell.formattedValue || '';
+        if (cells.length > maxCols) {
+          maxCols = cells.length;
+        }
+      }
 
-          // Check strikethrough
-          const tf = cell.effectiveFormat?.textFormat;
-          if (tf?.strikethrough) hasStrike = true;
+      // Initialize columns array
+      const columns = [];
+      for (let c = 0; c < maxCols; c++) {
+        columns[c] = [];
+      }
 
-          if (cell.textFormatRuns?.length) {
-            for (const run of cell.textFormatRuns) {
-              if (run.format?.strikethrough) {
-                hasStrike = true;
-                break;
+      // Fill columns[c] with items
+      dataRows.forEach((r, rowIdx) => {
+        const cells = r.values || [];
+        for (let c = 0; c < maxCols; c++) {
+          // Possibly empty if no cell at c
+          let cellVal = '';
+          let isStricken = false;
+
+          if (cells[c]) {
+            cellVal = cells[c].formattedValue || '';
+
+            // Check if strikethrough in formatting
+            let strFmt = cells[c].effectiveFormat?.textFormat;
+            if (strFmt?.strikethrough) {
+              isStricken = true;
+            }
+            // Also check runs
+            if (cells[c].textFormatRuns?.length) {
+              for (const run of cells[c].textFormatRuns) {
+                if (run.format?.strikethrough) {
+                  isStricken = true;
+                  break;
+                }
               }
             }
           }
-          return txt;
-        });
 
-        // We'll store the row's 0-based index in the sheet data
-        // but remember row 0 is headers, so the actual row = idx+1
-        return {
-          sheetRowIndex: idx + 1, // The actual row number in the sheet
-          cells: cellTexts,
-          hasStrike
-        };
+          columns[c].push({
+            rowIndex: rowIdx + 1, // actual row in the sheet (skipping header row)
+            colIndex: c,
+            text: cellVal,
+            isStricken
+          });
+        }
       });
 
-      return { headers, rows };
+      return columns;
     }
 
-    // NEW: function to apply strike-through to an entire row in Google Sheets
-    async function applyStrikethroughRow(sheetRowIndex, columnCount) {
+    /**
+     * Apply strike-through to a single cell in Google Sheets
+     */
+    async function applyStrikethroughCell(rowIndex, colIndex) {
       if (activeSheetId == null) return;
 
-      // This uses the "batchUpdate" method with a "repeatCell" request
-      // to set "textFormat.strikethrough = true" across the row.
       const requests = [{
         repeatCell: {
           range: {
             sheetId: activeSheetId,
-            startRowIndex: sheetRowIndex,        // inclusive
-            endRowIndex: sheetRowIndex + 1,      // exclusive
-            startColumnIndex: 0,
-            endColumnIndex: columnCount          // up to your last column
+            startRowIndex: rowIndex,   // inclusive
+            endRowIndex: rowIndex + 1, // exclusive
+            startColumnIndex: colIndex,
+            endColumnIndex: colIndex + 1
           },
           cell: {
             userEnteredFormat: {
@@ -626,32 +669,35 @@
       });
     }
 
-    // UPDATED: We'll add a "Done?" column for the checkbox in the UI
-    function renderSheetItems(headers, rows) {
+    /**
+     * Render the columns as a table:
+     *   - The table header is the array of column headers
+     *   - We figure out the max length among the columns
+     *   - Each row in the table is the nth item of each column
+     *
+     * Because columns are sorted independently, the “rows” won’t
+     * align with the original spreadsheet. This is intended behavior:
+     * we’re grouping by column, then pushing stricken cells to the bottom.
+     */
+    function renderSheetItems(headers, columns) {
       const container = document.getElementById('sheet-items');
       container.innerHTML = '';
 
-      if (!headers.length && !rows.length) {
+      if (!columns.length) {
         container.textContent = 'No items found.';
         return;
       }
 
-      // We'll build a table with an extra first column "Done?"
+      // Build the table
       const table = document.createElement('table');
 
       // Thead
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
-
-      // Extra column for "Done?"
-      const thDone = document.createElement('th');
-      thDone.textContent = 'Done?';
-      headerRow.appendChild(thDone);
-
-      // Then the actual sheet headers
-      headers.forEach(hdr => {
+      // Each column gets one header
+      headers.forEach(h => {
         const th = document.createElement('th');
-        th.textContent = hdr;
+        th.textContent = h;
         headerRow.appendChild(th);
       });
       thead.appendChild(headerRow);
@@ -659,43 +705,55 @@
 
       // Tbody
       const tbody = document.createElement('tbody');
-      rows.forEach(rowObj => {
+      // find the max column length
+      const maxLen = Math.max(...columns.map(col => col.length));
+
+      // Each row i in the table -> the i-th item of each column
+      for (let i = 0; i < maxLen; i++) {
         const tr = document.createElement('tr');
 
-        // 1) "Done?" cell
-        const tdDone = document.createElement('td');
+        // For each column j, get columns[j][i]
+        for (let j = 0; j < columns.length; j++) {
+          const td = document.createElement('td');
+          const item = columns[j][i];
 
-        if (!rowObj.hasStrike) {
-          // Render a checkbox for non-stricken rows
-          const chk = document.createElement('input');
-          chk.type = 'checkbox';
-          chk.addEventListener('change', async () => {
-            // Mark entire row as strikethrough in the sheet
-            const colCount = headers.length;
-            console.log(`Striking out row ${rowObj.sheetRowIndex}`);
-            await applyStrikethroughRow(rowObj.sheetRowIndex, colCount);
-            // Re-fetch so it sorts to the bottom, etc.
-            await fetchSheetItems();
-          });
-          tdDone.appendChild(chk);
-        } else {
-          // Already stricken, no checkbox
-          tr.classList.add('stricken-row'); // line-through styling
+          if (!item) {
+            // If no item, it's just an empty cell
+            tr.appendChild(td);
+            continue;
+          }
+
+          // If stricken
+          if (item.isStricken) {
+            td.classList.add('stricken');
+            td.textContent = item.text;
+          } else {
+            // Not stricken => show a checkbox
+            const wrapper = document.createElement('div');
+            const spanText = document.createElement('span');
+            spanText.textContent = item.text;
+            spanText.style.marginRight = '0.5rem';
+
+            const chk = document.createElement('input');
+            chk.type = 'checkbox';
+            chk.addEventListener('change', async () => {
+              console.log(`Striking out cell at row=${item.rowIndex}, col=${item.colIndex}`);
+              await applyStrikethroughCell(item.rowIndex, item.colIndex);
+              // Re-fetch so we pick up new formatting & re-sort
+              await fetchSheetItems();
+            });
+
+            wrapper.appendChild(spanText);
+            wrapper.appendChild(chk);
+            td.appendChild(wrapper);
+          }
+          tr.appendChild(td);
         }
 
-        tr.appendChild(tdDone);
-
-        // 2) Actual sheet columns
-        rowObj.cells.forEach(cellVal => {
-          const td = document.createElement('td');
-          td.textContent = cellVal;
-          tr.appendChild(td);
-        });
-
         tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
+      }
 
+      table.appendChild(tbody);
       container.appendChild(table);
     }
 
