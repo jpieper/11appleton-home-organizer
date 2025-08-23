@@ -54,12 +54,16 @@ Three calendars with different themes:
 - Click checkbox to mark complete (applies strikethrough)
 - Completed tasks sorted to bottom of columns
 - Google Apps Script archives completed tasks nightly
-- **Alternating Tasks**: Tasks starting with "next" (e.g., "next trash", "next recycling") alternate between Cyrus and Samira columns when completed
+- **Alternating Tasks**: Tasks starting with "next" (e.g., "next trash", "next recycling") alternate between paired columns when completed
+  - Column pairs defined in `ALTERNATING_PAIRS` array in google-apps-script.js:184
+  - Currently configured: Cyrus ↔ Samira
+  - Easy to add more pairs by editing the array
 
 ### Google Apps Script Automation
 - **importTasksFromCalendar()**: Parses "NAME: TASK" format events
 - **archiveStrikethroughTasks()**: Moves completed to "Completed" sheet
-  - Special handling for "next" tasks: When completed in Cyrus/Samira column, creates new task in alternate column
+  - Special handling for "next" tasks: When completed in one column, creates new task in paired column
+  - Column pairs configured via `ALTERNATING_PAIRS` data structure
 - **condenseTasksSheet()**: Removes empty rows
 - Deduplication via stored event IDs (2-day retention)
 

@@ -171,13 +171,22 @@ function placeTaskInColumn(tasksSheet, colIndex, taskText) {
  *     - Runs nightly (via trigger).
  *     - Special handling for "next" tasks: When a task starting
  *       with "next" (e.g., "next trash", "next recycling") is
- *       completed in Cyrus or Samira column, it creates a new
- *       identical task in the alternate column.
+ *       completed in one column, it creates a new identical task
+ *       in the paired alternate column based on ALTERNATING_PAIRS.
  ***********************************************************/
 function archiveStrikethroughTasks() {
   const SPREADSHEET_ID = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
   const TASKS_SHEET_NAME = 'Tasks';
   const COMPLETED_SHEET_NAME = 'Completed';
+  
+  // Define column pairs for alternating tasks
+  // Each pair is [columnA, columnB] - tasks alternate between these columns
+  const ALTERNATING_PAIRS = [
+    ['Cyrus', 'Samira'],
+    // Add more pairs here as needed, e.g.:
+    // ['Alice', 'Bob'],
+    // ['Team A', 'Team B']
+  ];
 
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const tasksSheet = ss.getSheetByName(TASKS_SHEET_NAME);
@@ -187,10 +196,21 @@ function archiveStrikethroughTasks() {
   const lastCol = tasksSheet.getLastColumn();
   if (lastRow < 2) return; // no tasks
 
-  // Get all column headers upfront for alternating tasks
+  // Get all column headers upfront
   const headers = tasksSheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  const cyrusCol = headers.indexOf('Cyrus') + 1;
-  const samiraCol = headers.indexOf('Samira') + 1;
+  
+  // Build a map of column names to their alternating partner and column index
+  const alternatingMap = {};
+  ALTERNATING_PAIRS.forEach(pair => {
+    const [colA, colB] = pair;
+    const colAIndex = headers.indexOf(colA) + 1;
+    const colBIndex = headers.indexOf(colB) + 1;
+    
+    if (colAIndex > 0 && colBIndex > 0) {
+      alternatingMap[colA] = { partner: colB, partnerIndex: colBIndex };
+      alternatingMap[colB] = { partner: colA, partnerIndex: colAIndex };
+    }
+  });
 
   // Loop through each cell in the data range
   for (let row = 2; row <= lastRow; row++) {
@@ -208,16 +228,13 @@ function archiveStrikethroughTasks() {
           
           // Check if this is a "next" task that should alternate
           const taskText = String(cellValue).toLowerCase().trim();
-          if (taskText.startsWith('next ') && cyrusCol > 0 && samiraCol > 0) {
-            // Only alternate between Cyrus and Samira columns
-            if (col === cyrusCol) {
-              // Task was in Cyrus column, create new one in Samira column
-              placeTaskInColumn(tasksSheet, samiraCol, cellValue);
-              Logger.log('Created alternating task in Samira column: ' + cellValue);
-            } else if (col === samiraCol) {
-              // Task was in Samira column, create new one in Cyrus column
-              placeTaskInColumn(tasksSheet, cyrusCol, cellValue);
-              Logger.log('Created alternating task in Cyrus column: ' + cellValue);
+          if (taskText.startsWith('next ')) {
+            // Check if this column has an alternating partner
+            const currentColumnName = headerName;
+            if (alternatingMap[currentColumnName]) {
+              const { partner, partnerIndex } = alternatingMap[currentColumnName];
+              placeTaskInColumn(tasksSheet, partnerIndex, cellValue);
+              Logger.log(`Created alternating task in ${partner} column: ${cellValue}`);
             }
           }
           
