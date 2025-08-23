@@ -169,6 +169,10 @@ function placeTaskInColumn(tasksSheet, colIndex, taskText) {
 /***********************************************************
  *  2) ARCHIVE COMPLETED (STRIKETHROUGH) TASKS
  *     - Runs nightly (via trigger).
+ *     - Special handling for "next" tasks: When a task starting
+ *       with "next" (e.g., "next trash", "next recycling") is
+ *       completed in Cyrus or Samira column, it creates a new
+ *       identical task in the alternate column.
  ***********************************************************/
 function archiveStrikethroughTasks() {
   const SPREADSHEET_ID = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
@@ -183,6 +187,11 @@ function archiveStrikethroughTasks() {
   const lastCol = tasksSheet.getLastColumn();
   if (lastRow < 2) return; // no tasks
 
+  // Get all column headers upfront for alternating tasks
+  const headers = tasksSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const cyrusCol = headers.indexOf('Cyrus') + 1;
+  const samiraCol = headers.indexOf('Samira') + 1;
+
   // Loop through each cell in the data range
   for (let row = 2; row <= lastRow; row++) {
     for (let col = 1; col <= lastCol; col++) {
@@ -196,6 +205,22 @@ function archiveStrikethroughTasks() {
           // Archive
           const headerName = tasksSheet.getRange(1, col).getValue();
           completedSheet.appendRow([new Date(), headerName, cellValue]);
+          
+          // Check if this is a "next" task that should alternate
+          const taskText = String(cellValue).toLowerCase().trim();
+          if (taskText.startsWith('next ') && cyrusCol > 0 && samiraCol > 0) {
+            // Only alternate between Cyrus and Samira columns
+            if (col === cyrusCol) {
+              // Task was in Cyrus column, create new one in Samira column
+              placeTaskInColumn(tasksSheet, samiraCol, cellValue);
+              Logger.log('Created alternating task in Samira column: ' + cellValue);
+            } else if (col === samiraCol) {
+              // Task was in Samira column, create new one in Cyrus column
+              placeTaskInColumn(tasksSheet, cyrusCol, cellValue);
+              Logger.log('Created alternating task in Cyrus column: ' + cellValue);
+            }
+          }
+          
           // Remove from "Tasks"
           cell.clearContent();
           cell.clearFormat();
