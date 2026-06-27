@@ -38,6 +38,11 @@ This is a vanilla HTML/JavaScript project with no build system:
 - `fitRegion()` binary-searches the largest font size at which each
   half's content fits its box, so nothing overflows the tablet screen
 - On fetch error it shows a quiet "retrying" banner (no page reload)
+- Installable as a fullscreen PWA (`manifest.webmanifest` + `sw.js` +
+  `icon-*.png`): Chrome's "Add to Home screen" then launches it with no
+  URL/tab bar. The service worker is network-first for the same-origin
+  shell (so pushed updates show on next load, and it survives Wi-Fi
+  blips) and deliberately never touches the cross-origin data requests.
 
 ### Data Access (no tablet login)
 - The tablet does **not** authenticate. The Apps Script Web App is

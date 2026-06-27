@@ -7,6 +7,13 @@
   <meta name="color-scheme" content="light">
   <title>11 Appleton #2 Tasks</title>
 
+  <!-- PWA: lets "Add to Home screen" launch fullscreen with no browser UI -->
+  <link rel="manifest" href="manifest.webmanifest"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
   <style>
     :root { color-scheme: light; }
 
@@ -460,6 +467,14 @@
     window.addEventListener('hashchange', () => {
       if (location.hash.indexOf('#token=') === 0) location.reload();
     });
+
+    // Register the service worker so Chrome installs this as a standalone PWA
+    // (no URL/tab bar) and the shell survives brief network drops.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW registration failed:', err));
+      });
+    }
 
     fetchData();
     setInterval(fetchData, REFRESH_MS);
