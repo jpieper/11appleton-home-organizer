@@ -102,6 +102,24 @@
       line-height: 1.5;
     }
     .setup code { background: #f2f2f2; padding: 0 0.2em; border-radius: 3px; }
+    .setup input {
+      font-size: 1em;
+      padding: 0.4em;
+      width: 90%;
+      max-width: 24em;
+      margin: 0.5em 0;
+    }
+    .setup button {
+      font-size: 1em;
+      padding: 0.4em 1.2em;
+      cursor: pointer;
+    }
+    .setup .hint {
+      font-size: 0.85em;
+      color: #777;
+      margin-top: 0.75em;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
@@ -133,6 +151,7 @@
           incoming = new URLSearchParams(location.search).get('token');
         }
         if (incoming) {
+          incoming = incoming.trim(); // tolerate stray copy/paste whitespace
           localStorage.setItem('apiToken', incoming);
           history.replaceState(null, '', location.pathname); // scrub token from URL
         }
@@ -378,12 +397,53 @@
 
     function showNeedsToken() {
       const here = location.origin + location.pathname;
-      document.getElementById('calendar-events').innerHTML =
-        '<div class="setup">This tablet isn’t authorized yet. Open this page once as ' +
-        '<code>' + here + '#token=YOUR_SECRET</code> to store the access token on ' +
-        'this device. (The token is saved locally and removed from the address bar.)</div>';
+      const stored = localStorage.getItem('apiToken') || '';
+      const cal = document.getElementById('calendar-events');
+      cal.innerHTML = '';
+
+      const box = document.createElement('div');
+      box.className = 'setup';
+
+      const p = document.createElement('p');
+      p.textContent = 'This tablet isn’t authorized yet. Paste the access token and tap Authorize:';
+      box.appendChild(p);
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = 'tokenInput';
+      input.placeholder = 'access token';
+      input.autocapitalize = 'off';
+      input.autocomplete = 'off';
+      input.autocorrect = 'off';
+      input.spellcheck = false;
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveTokenFromInput(); });
+      box.appendChild(input);
+
+      const btn = document.createElement('button');
+      btn.textContent = 'Authorize';
+      btn.addEventListener('click', saveTokenFromInput);
+      box.appendChild(btn);
+
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.textContent = stored
+        ? ('This device currently has a ' + stored.length + '-character token saved, which the ' +
+           'server rejected — most likely a typo. Re-paste to replace it.')
+        : ('You can also open this page as ' + here + '#token=YOUR_TOKEN — pasting is more reliable.');
+      box.appendChild(hint);
+
+      cal.appendChild(box);
       document.getElementById('sheet-items').innerHTML = '';
       requestAnimationFrame(fitAll);
+    }
+
+    function saveTokenFromInput() {
+      const input = document.getElementById('tokenInput');
+      if (!input) return;
+      const val = input.value.trim();
+      if (!val) return;
+      try { localStorage.setItem('apiToken', val); } catch (e) { /* storage blocked */ }
+      location.reload();
     }
 
     // --------------------------------------------------------------------
@@ -393,6 +453,12 @@
     window.addEventListener('resize', () => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(fitAll, 150);
+    });
+
+    // Adding #token=... to an already-open tab only changes the fragment and
+    // doesn't re-run this script; reload so resolveToken() captures it.
+    window.addEventListener('hashchange', () => {
+      if (location.hash.indexOf('#token=') === 0) location.reload();
     });
 
     fetchData();
