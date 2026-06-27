@@ -2,15 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
   <meta name="theme-color" content="#ffffff" />
   <meta name="color-scheme" content="light">
   <title>11 Appleton #2 Tasks</title>
 
   <style>
-    :root {
-      color-scheme: light;
-    }
+    :root { color-scheme: light; }
+
     html, body {
       margin: 0;
       padding: 0;
@@ -18,571 +17,206 @@
       font-family: sans-serif;
       display: flex;
       flex-direction: column;
+      overflow: hidden;            /* the page itself never scrolls */
+      -webkit-text-size-adjust: none;
     }
-    :fullscreen, ::backdrop {
-      background-color: rgba(255,255,255,0);
-    }
-    header {
-      padding: 1rem;
-    }
+
     main {
       flex: 1;
       display: flex;
       flex-direction: column;
-      padding: 1rem;
+      padding: 0.5rem;
+      gap: 0.5rem;
+      min-height: 0;               /* allow flex children to shrink */
     }
 
-    /* The "top half" for the merged calendar */
-    #topHalf {
+    /* Calendar (top) and tasks (bottom) each get half the screen and
+       never scroll — their content is scaled to fit by fitRegion(). */
+    #topHalf, #bottomHalf {
       flex: 1;
-      overflow-y: auto;
-      padding: 0;
+      min-height: 0;
       border: 1px solid #ccc;
-      margin-bottom: 1rem;
+      overflow: hidden;
     }
-    /* The "bottom half" for sheets */
-    #bottomHalf {
-      flex: 1;
-      overflow-y: auto;
-      padding: 0.3rem;
-      border: 1px solid #ccc;
+    /* Inner wrappers: fitRegion() sets font-size here; everything else
+       is sized in em so it scales together. */
+    #calendar-events, #sheet-items {
+      padding: 0.25em;
     }
 
-    /* TABLE LAYOUT FOR CALENDAR (7 columns) */
     table {
       width: 100%;
-      table-layout: fixed; /* evenly spaced columns */
+      table-layout: fixed;         /* evenly spaced columns */
       border-collapse: collapse;
+      font-size: 1em;
     }
     th, td {
       border: 1px solid #ccc;
       vertical-align: top;
-      padding: 0.5rem;
+      padding: 0.3em 0.4em;
+      word-break: break-word;
+    }
+    th {
+      background: #f7f7f7;
+      font-size: 0.85em;
     }
 
-    /* We'll override these colors inline for each calendar. */
     .event-box {
       border-radius: 4px;
-      margin-bottom: 0.5rem;
-      padding: 0.25rem 0.5rem;
-      font-size: 0.9rem;
-      line-height: 1.2rem;
+      margin-bottom: 0.3em;
+      padding: 0.2em 0.4em;
+      line-height: 1.2;
     }
 
-    /* For the sheet data table at bottom */
-    #sheet-items table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 1rem;
-    }
-    #sheet-items th, #sheet-items td {
-      border: 1px solid #ccc;
-      padding: 0.5rem;
-      vertical-align: top;
-    }
-
-    /* We'll apply this class to stricken text in the Sheet portion */
     .stricken {
       text-decoration: line-through;
       color: #999;
     }
 
-    /* === NEW FLOATING TAB CSS === */
-    .signin-tab {
-      position: fixed;
-      bottom: 0;
-      right: 0;
-      width: 280px;
-      background: #fff;
-      border: 1px solid #ccc;
-      box-shadow: 0 0 8px rgba(0,0,0,0.1);
-      transition: transform 0.3s ease-in-out;
-      font-family: sans-serif;
-      z-index: 9999;
+    /* A task with its completion checkbox. */
+    .task {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.4em;
+      line-height: 1.25;
     }
-    .signin-tab.expanded {
-      transform: translateY(0);
+    .task input {
+      width: 1em;
+      height: 1em;
+      margin: 0.1em 0 0 0;
+      flex: none;
     }
-    .signin-tab.collapsed {
-      transform: translateY(calc(100% - 40px));
-    }
-    .signin-tab-header {
-      background: #f2f2f2;
-      padding: 0.5rem;
-      cursor: pointer;
-      font-weight: bold;
+
+    #status {
+      display: none;
+      padding: 0.25rem 0.5rem;
+      background: #fff3cd;
+      color: #7a5b00;
+      font-size: 0.85rem;
       text-align: center;
-      border-bottom: 1px solid #ddd;
     }
-    .signin-tab-header:hover {
-      background: #e9e9e9;
-    }
-    .signin-tab-content {
+    .setup {
       padding: 1rem;
+      font-size: 0.95rem;
+      color: #444;
+      line-height: 1.5;
     }
+    .setup code { background: #f2f2f2; padding: 0 0.2em; border-radius: 3px; }
   </style>
 </head>
 <body>
   <main>
-    <div id="topHalf">
-      <div id="calendar-events"></div>
-    </div>
-    <div id="bottomHalf">
-      <div id="sheet-items"></div>
-    </div>
+    <div id="topHalf"><div id="calendar-events"></div></div>
+    <div id="bottomHalf"><div id="sheet-items"></div></div>
   </main>
+  <div id="status"></div>
 
-  <!-- Floating Sign-In Tab -->
-  <div class="signin-tab" id="signin-tab">
-    <div class="signin-tab-header" id="signin-tab-header">
-      Sign In
-    </div>
-    <div class="signin-tab-content">
-      <div id="signin-button-container"></div>
-    </div>
-  </div>
+  <script>
+    // --------------------------------------------------------------------
+    // CONFIG  — fill this in after deploying google-apps-script.js
+    // --------------------------------------------------------------------
+    // Paste the Apps Script Web App "/exec" URL here. This is just the
+    // endpoint address (the page needs it to make requests) — NOT a secret.
+    const WEB_APP_URL = 'PASTE_YOUR_WEB_APP_EXEC_URL_HERE';
 
-  <!-- 1) jwt-decode from a CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/jwt-decode@3.1.2/build/jwt-decode.min.js"></script>
+    // The secret token is intentionally NOT stored in this (public) file.
+    // It lives only in this tablet's localStorage. To authorize a device,
+    // open the page once as:   <page-url>#token=YOUR_SECRET
+    // resolveToken() saves it locally and strips it back out of the URL so
+    // it isn't bookmarked, shoulder-surfed, or left in history.
+    function resolveToken() {
+      try {
+        let incoming = null;
+        if (location.hash.indexOf('#token=') === 0) {
+          incoming = decodeURIComponent(location.hash.slice('#token='.length));
+        } else {
+          incoming = new URLSearchParams(location.search).get('token');
+        }
+        if (incoming) {
+          localStorage.setItem('apiToken', incoming);
+          history.replaceState(null, '', location.pathname); // scrub token from URL
+        }
+        return localStorage.getItem('apiToken') || '';
+      } catch (e) {
+        return '';
+      }
+    }
+    const API_TOKEN = resolveToken();
 
-  <!-- 2) The entire gothic.js library (inline). We'll define "gothic". -->
-  <script type="module">
-    /***********************************************************************
-     * GOTHIC.JS START (slightly modified to use global jwt_decode)
-     ***********************************************************************/
-    const state = {
-      prev:      false,
-      loaded:    false,
-      cid:       null,
-      key:       null,
-      scope:     null,
-      discovery: null,
-      user:      null
+    // How often to refresh everything (calendar + tasks).
+    const REFRESH_MS = 5 * 60 * 1000;
+
+    // Calendar color themes, keyed by the 'color' tag the backend sends.
+    const COLORS = {
+      chores: { bg: '#CDFFB8', border: '#80FF33' },
+      kids:   { bg: '#FFEAB8', border: '#FFBB33' },
+      family: { bg: '#B8F1FF', border: '#33BBFF' },
     };
 
-    const obs = [];
-    let googleRef, gapiRef;
-
-    const gothic = {
-      load,
-      recognize,
-      button,
-      onetap,
-      observe,
-      unobserve,
-      signout,
-      revoke,
-      user
-    };
-
-    export default gothic;
-
-    function load(clientId, apiKey, scope, discovery) {
-      state.cid       = clientId;
-      state.key       = apiKey;
-      state.scope     = scope;
-      state.discovery = discovery;
-      // If we have a localStorage marker, we assume we recognized them before.
-      state.prev = window.localStorage.getItem('gothic-id') ? true : false;
-      _load_libraries();
+    // --------------------------------------------------------------------
+    // DATA FETCHING
+    // --------------------------------------------------------------------
+    function apiUrl(params) {
+      const u = new URL(WEB_APP_URL);
+      if (API_TOKEN) u.searchParams.set('token', API_TOKEN);
+      Object.keys(params || {}).forEach(k => u.searchParams.set(k, params[k]));
+      return u.toString();
     }
 
-    function recognize() {
-      return state.prev;
-    }
-
-    function observe(cb) {
-      obs.push(cb);
-    }
-
-    function unobserve(cb) {
-      const idx = obs.indexOf(cb);
-      if (idx >= 0) {
-        obs.splice(idx, 1);
-      }
-    }
-
-    function button(parent_id, params = {}) {
-      const ctr = document.getElementById(parent_id);
-      if (!ctr) {
-        throw new Error(`No container for signin button: '${parent_id}' `);
-      }
-      const options = {
-        type:  'standard',
-        theme: 'outline',
-        size:  'medium',
-        shape: 'pill',
-        ...params,
-      };
-      googleRef.accounts.id.renderButton(ctr, options);
-    }
-
-    function onetap() {
-      function _handle_prompt_events(evt) {
-        if (evt.isNotDisplayed()) {
-          if (evt.getNotDisplayedReason() === 'suppressed_by_user') {
-            _disable();
-            _notify('onetap_suppressed');
-          }
-        }
-        if (evt.isSkippedMoment()) {
-          _notify('onetap_suppressed');
-        }
-      }
-      googleRef.accounts.id.prompt(_handle_prompt_events);
-    }
-
-    function signout() {
-      _disable();
-      _notify('signout');
-    }
-
-    function revoke() {
-      if (!state.user?.email) {
-        _disable();
-        _notify('revoke');
+    async function fetchData() {
+      if (!WEB_APP_URL || WEB_APP_URL.indexOf('PASTE_') === 0) {
+        showSetup();
         return;
       }
-      googleRef.accounts.id.revoke(state.user.email, () => {
-        _disable();
-        _notify('revoke');
-      });
-    }
-
-    function user() {
-      return state.user;
-    }
-
-    // Private:
-    function _disable() {
-      state.user = null;
-      window.localStorage.removeItem('gothic-id');
-      if (googleRef?.accounts?.id?.disableAutoSelect) {
-        googleRef.accounts.id.disableAutoSelect();
-      }
-    }
-
-    function _authorize() {
-      return new Promise((res, rej) => {
-        state.tok_client = googleRef.accounts.oauth2.initTokenClient({
-          client_id: state.cid,
-          scope: state.scope,
-          hint: state.user?.email,
-          callback: (response) => {
-            if (!response.access_token) {
-              return rej('authorization-failed');
-            }
-            res();
-          }
-        });
-        state.tok_client.requestAccessToken({ prompt: '' });
-      });
-    }
-
-    function _load_libraries() {
-      let goog_ready = false;
-      let gapi_ready = false;
-
-      let pass, fail;
-      const ready = new Promise((res, rej) => {
-        pass = res;
-        fail = rej;
-      });
-
-      function _all_ready() {
-        if (goog_ready && gapi_ready) {
-          pass();
-          _notify('loaded');
-        }
-      }
-
-      function _gapi_setup() {
-        gapiRef = window.gapi;
-        gapiRef.load('client', async() => {
-          await gapiRef.client.init({
-            apiKey: state.key,
-            discoveryDocs: [ state.discovery ]
-          });
-          gapi_ready = true;
-          _all_ready();
-        });
-      }
-
-      function _goog_ready() {
-        googleRef = window.google;
-        googleRef.accounts.id.initialize({
-          client_id: state.cid,
-          auto_select: true,
-          callback: _on_response
-        });
-        goog_ready = true;
-        _all_ready();
-      }
-
-      // 1) Load GIS
-      const googscr = document.createElement('script');
-      googscr.type = 'text/javascript';
-      googscr.src  = 'https://accounts.google.com/gsi/client';
-      googscr.defer = true;
-      googscr.onload  = _goog_ready;
-      googscr.onerror = fail;
-      document.head.appendChild(googscr);
-
-      // 2) Load GAPI
-      const gapiscr = document.createElement('script');
-      gapiscr.type = 'text/javascript';
-      gapiscr.src  = 'https://apis.google.com/js/api.js';
-      gapiscr.defer = true;
-      gapiscr.onload  = _gapi_setup;
-      gapiscr.onerror = fail;
-      document.head.appendChild(gapiscr);
-
-      return ready;
-    }
-
-    function _notify(type, user = null) {
-      obs.forEach(fn => fn(type, user));
-    }
-
-    async function _on_response(r) {
-      state.user = null;
-      let event_type = 'unknown';
-
-      if (r && r.credential) {
-        try {
-          const rawdata = jwt_decode(r.credential);
-          state.user = (({ email, family_name, given_name, picture, name }) =>
-            ({ email, family_name, given_name, picture, name }))(rawdata);
-
-          await _authorize();
-          window.localStorage.setItem('gothic-id', 'loaded');
-          event_type = 'signin';
-        } catch (err) {
-          if (err === 'auth-failed') {
-            event_type = 'auth-failed';
-          } else {
-            console.error('Error in _on_response:', err);
-            event_type = 'error';
-          }
-        }
-      }
-      _notify(event_type, state.user);
-    }
-    /***********************************************************************
-     * GOTHIC.JS END
-     ***********************************************************************/
-
-    // --------------------------------------------------------------------
-    // CONFIG VALUES
-    // --------------------------------------------------------------------
-    // NOTE the SCOPE is now '.../spreadsheets' (read-write), not 'readonly'
-    const CLIENT_ID    = '138340694200-7b7bcj1ndlm3coovfs7hlf6alu8v0bou.apps.googleusercontent.com';
-    const API_KEY      = '';
-    const SCOPES       = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar.readonly';
-    const DISCOVERY    = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-
-    // We'll track multiple calendars in an array, each with its own color scheme,
-    // plus an "omitPastEvents" flag if we want to exclude past events from that calendar.
-    const CALENDARS = [
-      {
-        // 11 Appleton Chores
-        id: '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com',
-        backgroundColor: '#CDFFB8',
-        borderColor: '#80FF33',
-        omitPastEvents: true
-      },
-      {
-        // Kids Events
-        id: 'km9ikgpkljdeiccu25mlng56d0@group.calendar.google.com',
-        backgroundColor: '#FFEAB8',
-        borderColor: '#FFBB33',
-      },
-      {
-        // 11 Appleton Family
-        id: '9a3dc07b1e64453f57c0aa64e2996fcbdce315a1ead4edd5a2f9579ccf4dce87@group.calendar.google.com',
-        backgroundColor: '#B8F1FF',
-        borderColor: '#33BBFF',
-      },
-    ];
-
-    // Sheets config
-    const SHEET_ID     = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
-    const SHEET_RANGE  = 'Tasks!A1:Z';
-    let activeSheetId  = null; // We'll store the numeric sheetId for referencing in updates
-
-    // --------------------------------------------------------------------
-    // GOTHIC APP LOGIC
-    // --------------------------------------------------------------------
-
-    // A quick helper to toggle the tab open/closed
-    function toggleSignInTab(forceExpand = null) {
-      const tab = document.getElementById('signin-tab');
-      if (!tab) return;
-
-      if (forceExpand === true) {
-        tab.classList.add('expanded');
-        tab.classList.remove('collapsed');
-      }
-      else if (forceExpand === false) {
-        tab.classList.add('collapsed');
-        tab.classList.remove('expanded');
-      }
-      else {
-        // Toggle
-        const currentlyExpanded = tab.classList.contains('expanded');
-        if (currentlyExpanded) {
-          tab.classList.remove('expanded');
-          tab.classList.add('collapsed');
-        } else {
-          tab.classList.remove('collapsed');
-          tab.classList.add('expanded');
-        }
-      }
-    }
-
-    // Listen for clicks on the tab header
-    document.addEventListener('DOMContentLoaded', () => {
-      const header = document.getElementById('signin-tab-header');
-      if (header) {
-        header.addEventListener('click', () => toggleSignInTab());
-      }
-    });
-
-    gothic.observe(async (type, user) => {
-      console.log('[Gothic event]', type, user);
-
-      if (type === 'loaded') {
-        if (gothic.recognize()) {
-          // User recognized => attempt One-Tap
-          gothic.onetap();
-          // Collapsed by default if recognized
-          toggleSignInTab(false);
-        } else {
-          // Not recognized => display the button and expand tab
-          gothic.button('signin-button-container', {
-            type: 'standard',
-            size: 'large',
-            text: 'signup_with'
-          });
-          toggleSignInTab(true);
-        }
-      }
-      else if (type === 'signin') {
-        // The user has signed in => collapse tab
-        toggleSignInTab(false);
-
-        await loadSheetsClient();
-        fetchCalendarEvents();
-        fetchSheetItems();
-
-        // Poll the sheet every 5 minutes
-        setInterval(() => {
-          console.log('Polling Sheets API for updates...');
-          fetchSheetItems();
-        }, 5 * 60_000);
-
-        // Poll the calendar every 15 minutes
-        setInterval(() => {
-          console.log('Polling Calendar API for updates...');
-          fetchCalendarEvents();
-        }, 15 * 60_000);
-      }
-      else if (type === 'signout' || type === 'revoke') {
-        // Clear data, expand tab so they can sign in again
-        clearUI();
-        toggleSignInTab(true);
-      }
-    });
-
-    // Initialize
-    gothic.load(CLIENT_ID, API_KEY, SCOPES, DISCOVERY);
-
-    // --------------------------------------------------------------------
-    // 1) LOAD SHEETS CLIENT
-    // --------------------------------------------------------------------
-    async function loadSheetsClient() {
-      if (!window.gapi?.client?.sheets) {
-        await window.gapi.client.load('sheets', 'v4');
-      }
-    }
-
-    // --------------------------------------------------------------------
-    // 2) FETCH CALENDAR EVENTS (MERGED)
-    // --------------------------------------------------------------------
-    async function fetchCalendarEvents() {
       try {
-        const nowTime = Date.now();
-        const now     = new Date();
-        const timeMin = now.toISOString();
-
-        const future  = new Date(now.getTime() + (6 * 24 * 60 * 60 * 1000));
-        future.setHours(23, 59, 59, 999);
-        const timeMax = future.toISOString();
-
-        const allEvents = [];
-        for (const cal of CALENDARS) {
-          const resp = await window.gapi.client.calendar.events.list({
-            calendarId: cal.id,
-            timeMin,
-            timeMax,
-            singleEvents: true,
-            orderBy: 'startTime'
-          });
-          let events = resp.result.items || [];
-
-          if (cal.omitPastEvents) {
-            events = events.filter(ev => {
-              const start = new Date(ev.start.dateTime || ev.start.date).getTime();
-              return start >= nowTime;
-            });
-          }
-          for (const ev of events) {
-            ev._bgColor     = cal.backgroundColor;
-            ev._borderColor = cal.borderColor;
-          }
-          allEvents.push(...events);
-        }
-
-        renderCalendarEvents(allEvents);
+        const res = await fetch(apiUrl({}));
+        const json = await res.json();
+        if (json.error === 'unauthorized') { showNeedsToken(); return; }
+        if (!json.ok) throw new Error(json.error || 'request failed');
+        render(json.data);
+        setStatus('');
       } catch (err) {
-        console.error('Calendar error:', err);
-        window.location.reload();
+        console.error('fetchData failed:', err);
+        // Don't reload — just show a quiet banner and let the next poll retry.
+        setStatus('Can’t reach server — retrying…');
       }
     }
 
-    function renderCalendarEvents(events) {
+    async function completeTask(row, col) {
+      try {
+        const res = await fetch(apiUrl({ action: 'complete', row, col }));
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || 'complete failed');
+      } catch (err) {
+        console.error('completeTask failed:', err);
+      }
+      fetchData(); // refresh to reflect the strikethrough
+    }
+
+    // --------------------------------------------------------------------
+    // RENDERING
+    // --------------------------------------------------------------------
+    function render(data) {
+      renderCalendar(data.days || [], data.events || []);
+      renderTasks(data.tasks || { headers: [], columns: [] });
+      requestAnimationFrame(fitAll);
+    }
+
+    function renderCalendar(days, events) {
       const container = document.getElementById('calendar-events');
       container.innerHTML = '';
 
-      const days = [];
-      const now = new Date();
-      now.setHours(0, 0, 0, 0);
-      for (let i = 0; i < 7; i++) {
-        days.push(new Date(now.getTime() + i * 24 * 60 * 60 * 1000));
-      }
-
-      const dayEventMap = {};
-      for (const d of days) {
-        const key = d.toISOString().split('T')[0];
-        dayEventMap[key] = [];
-      }
-
-      for (const ev of events) {
-        const startStr  = ev.start.dateTime || ev.start.date;
-        const startDate = new Date(startStr);
-        startDate.setHours(0, 0, 0, 0);
-        const key = startDate.toISOString().split('T')[0];
-        if (dayEventMap[key]) {
-          dayEventMap[key].push(ev);
-        }
-      }
+      const byDay = {};
+      days.forEach(d => { byDay[d.key] = []; });
+      events.forEach(ev => { if (byDay[ev.dateKey]) byDay[ev.dateKey].push(ev); });
 
       const table = document.createElement('table');
+
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
       days.forEach(d => {
         const th = document.createElement('th');
-        th.textContent = d.toDateString();
+        th.textContent = d.label;
         headerRow.appendChild(th);
       });
       thead.appendChild(headerRow);
@@ -591,27 +225,18 @@
       const tbody = document.createElement('tbody');
       const row = document.createElement('tr');
       days.forEach(d => {
-        const key = d.toISOString().split('T')[0];
         const td = document.createElement('td');
-        const evs = dayEventMap[key] || [];
-
-        if (evs.length > 0) {
-          evs.sort((a, b) => {
-            const aTime = new Date(a.start.dateTime || a.start.date).getTime();
-            const bTime = new Date(b.start.dateTime || b.start.date).getTime();
-            return aTime - bTime;
-          });
-          evs.forEach(ev => {
-            const box = document.createElement('div');
-            box.className = 'event-box';
-            box.style.backgroundColor = ev._bgColor || '#EEE';
-            box.style.border = '1px solid ' + (ev._borderColor || '#CCC');
-            box.textContent = `${formatEventTime(ev)} - ${ev.summary}`;
-            td.appendChild(box);
-          });
-        } else {
-          td.textContent = 'No events';
-        }
+        const evs = byDay[d.key] || [];
+        evs.sort((a, b) => a.sortMs - b.sortMs);
+        evs.forEach(ev => {
+          const box = document.createElement('div');
+          box.className = 'event-box';
+          const c = COLORS[ev.color] || { bg: '#eee', border: '#ccc' };
+          box.style.backgroundColor = c.bg;
+          box.style.border = '1px solid ' + c.border;
+          box.textContent = ev.time + ' - ' + ev.summary;
+          td.appendChild(box);
+        });
         row.appendChild(td);
       });
       tbody.appendChild(row);
@@ -619,180 +244,24 @@
       container.appendChild(table);
     }
 
-    function formatEventTime(ev) {
-      if (ev.start && ev.start.dateTime) {
-        const dt = new Date(ev.start.dateTime);
-        let hour = dt.getHours();
-        const minutes = dt.getMinutes();
-        const ampm = hour >= 12 ? 'pm' : 'am';
-        hour = hour % 12;
-        if (hour === 0) hour = 12;
-        const minutesStr = minutes ? `:${String(minutes).padStart(2, '0')}` : '';
-        return `${hour}${minutesStr}${ampm}`;
-      } else {
-        return 'All Day';
-      }
-    }
-
-    // --------------------------------------------------------------------
-    // 3) FETCH SHEET ITEMS & RENDER
-    // --------------------------------------------------------------------
-    async function fetchSheetItems() {
-      try {
-        const resp = await gapi.client.sheets.spreadsheets.get({
-          spreadsheetId: SHEET_ID,
-          ranges: [SHEET_RANGE],
-          includeGridData: true
-        });
-
-        const sheet = resp.result.sheets[0];
-        if (!sheet) {
-          console.log('No sheet data found');
-          renderSheetItems([], []);
-          return;
-        }
-
-        activeSheetId = sheet.properties.sheetId;
-        const rowData = sheet.data?.[0]?.rowData || [];
-        const headers = parseHeaders(rowData);
-        let columns   = parseIntoColumns(rowData);
-        columns       = removeTrailingEmptyRows(columns);
-
-        // Sort each column so that non-stricken items appear first
-        columns.forEach(colArr => {
-          colArr.sort((a, b) => {
-            if (a.isStricken === b.isStricken) return 0;
-            return a.isStricken ? 1 : -1;
-          });
-        });
-
-        renderSheetItems(headers, columns);
-      } catch (err) {
-        console.error('Sheets error:', err);
-        window.location.reload();
-      }
-    }
-
-    function parseHeaders(rowData) {
-      if (!rowData.length) return [];
-      const headerCells = rowData[0].values || [];
-      return headerCells.map(cell => cell.formattedValue || '');
-    }
-
-    function parseIntoColumns(rowData) {
-      if (rowData.length <= 1) return [];
-      const dataRows = rowData.slice(1);
-
-      let maxCols = 0;
-      for (const r of dataRows) {
-        const cells = r.values || [];
-        if (cells.length > maxCols) {
-          maxCols = cells.length;
-        }
-      }
-
-      const columns = [];
-      for (let c = 0; c < maxCols; c++) {
-        columns[c] = [];
-      }
-
-      dataRows.forEach((r, rowIdx) => {
-        const cells = r.values || [];
-        for (let c = 0; c < maxCols; c++) {
-          let cellVal = '';
-          let isStricken = false;
-          if (cells[c]) {
-            cellVal = cells[c].formattedValue || '';
-            let strFmt = cells[c].effectiveFormat?.textFormat;
-            if (strFmt?.strikethrough) {
-              isStricken = true;
-            }
-            if (cells[c].textFormatRuns?.length) {
-              for (const run of cells[c].textFormatRuns) {
-                if (run.format?.strikethrough) {
-                  isStricken = true;
-                  break;
-                }
-              }
-            }
-          }
-          columns[c].push({
-            rowIndex: rowIdx + 1,
-            colIndex: c,
-            text: cellVal,
-            isStricken
-          });
-        }
-      });
-      return columns;
-    }
-
-    function removeTrailingEmptyRows(columns) {
-      let maxRowWithData = -1;
-      const colCount = columns.length;
-      const maxLen   = Math.max(...columns.map(col => col.length));
-
-      for (let i = 0; i < maxLen; i++) {
-        let hasData = false;
-        for (let c = 0; c < colCount; c++) {
-          const item = columns[c][i];
-          if (item && item.text.trim().length > 0) {
-            hasData = true;
-            break;
-          }
-        }
-        if (hasData) {
-          maxRowWithData = i;
-        }
-      }
-      if (maxRowWithData === -1) {
-        return [];
-      }
-      columns.forEach((col, idx) => {
-        columns[idx] = col.slice(0, maxRowWithData + 1);
-      });
-      return columns;
-    }
-
-    async function applyStrikethroughCell(rowIndex, colIndex) {
-      if (activeSheetId == null) return;
-
-      const requests = [{
-        repeatCell: {
-          range: {
-            sheetId: activeSheetId,
-            startRowIndex: rowIndex,
-            endRowIndex: rowIndex + 1,
-            startColumnIndex: colIndex,
-            endColumnIndex: colIndex + 1
-          },
-          cell: {
-            userEnteredFormat: {
-              textFormat: {
-                strikethrough: true
-              }
-            }
-          },
-          fields: "userEnteredFormat.textFormat.strikethrough"
-        }
-      }];
-
-      await gapi.client.sheets.spreadsheets.batchUpdate({
-        spreadsheetId: SHEET_ID,
-        resource: { requests }
-      });
-    }
-
-    function renderSheetItems(headers, columns) {
+    function renderTasks(tasks) {
       const container = document.getElementById('sheet-items');
       container.innerHTML = '';
 
+      const headers = tasks.headers || [];
+      let columns = (tasks.columns || []).map(col => col.slice());
+      columns = removeTrailingEmptyRows(columns);
+      // Non-stricken items first, completed ones sink to the bottom.
+      columns.forEach(col => col.sort((a, b) =>
+        a.isStricken === b.isStricken ? 0 : (a.isStricken ? 1 : -1)));
+
       if (!columns.length) {
-        container.textContent = 'No items found.';
+        container.textContent = 'No items.';
         return;
       }
 
       const table = document.createElement('table');
+
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
       headers.forEach(h => {
@@ -804,39 +273,32 @@
       table.appendChild(thead);
 
       const tbody = document.createElement('tbody');
-      const maxLen = Math.max(...columns.map(col => col.length));
-
+      const maxLen = Math.max(0, ...columns.map(col => col.length));
       for (let i = 0; i < maxLen; i++) {
         const tr = document.createElement('tr');
         for (let j = 0; j < columns.length; j++) {
           const td = document.createElement('td');
           const item = columns[j][i];
 
-          if (!item) {
+          if (!item || !item.text.trim()) {
             tr.appendChild(td);
             continue;
           }
 
-          if (!item.text.trim()) {
-            td.textContent = '';
-          } else if (item.isStricken) {
+          if (item.isStricken) {
             td.classList.add('stricken');
             td.textContent = item.text;
           } else {
-            const wrapper = document.createElement('div');
+            const label = document.createElement('label');
+            label.className = 'task';
             const chk = document.createElement('input');
             chk.type = 'checkbox';
-            chk.style.marginRight = '0.5rem';
-            chk.addEventListener('change', async () => {
-              console.log(`Striking out cell at row=${item.rowIndex}, col=${item.colIndex}`);
-              await applyStrikethroughCell(item.rowIndex, item.colIndex);
-              await fetchSheetItems();
-            });
-            const spanText = document.createElement('span');
-            spanText.textContent = item.text;
-            wrapper.appendChild(chk);
-            wrapper.appendChild(spanText);
-            td.appendChild(wrapper);
+            chk.addEventListener('change', () => completeTask(item.row, item.col));
+            const span = document.createElement('span');
+            span.textContent = item.text;
+            label.appendChild(chk);
+            label.appendChild(span);
+            td.appendChild(label);
           }
           tr.appendChild(td);
         }
@@ -846,10 +308,95 @@
       container.appendChild(table);
     }
 
-    function clearUI() {
-      document.getElementById('calendar-events').innerHTML = '';
-      document.getElementById('sheet-items').innerHTML = '';
+    function removeTrailingEmptyRows(columns) {
+      if (!columns.length) return [];
+      const colCount = columns.length;
+      const maxLen = Math.max(0, ...columns.map(col => col.length));
+
+      let maxRowWithData = -1;
+      for (let i = 0; i < maxLen; i++) {
+        let hasData = false;
+        for (let c = 0; c < colCount; c++) {
+          const item = columns[c][i];
+          if (item && item.text.trim().length > 0) { hasData = true; break; }
+        }
+        if (hasData) maxRowWithData = i;
+      }
+      if (maxRowWithData === -1) return [];
+      return columns.map(col => col.slice(0, maxRowWithData + 1));
     }
+
+    // --------------------------------------------------------------------
+    // AUTO-FIT  — scale each half's content so it fills, but never
+    // overflows, its box. No scrolling under normal load.
+    // --------------------------------------------------------------------
+    function fitRegion(outer, inner) {
+      if (!inner.firstChild) return;
+      outer.style.overflow = 'hidden';
+
+      const MIN = 8, MAX = 24;
+      let lo = MIN, hi = MAX, best = MIN;
+      // Binary search the largest font size that still fits.
+      for (let i = 0; i < 8; i++) {
+        const mid = (lo + hi) / 2;
+        inner.style.fontSize = mid + 'px';
+        const fits = inner.scrollHeight <= outer.clientHeight - 2 &&
+                     inner.scrollWidth <= outer.clientWidth;
+        if (fits) { best = mid; lo = mid; } else { hi = mid; }
+      }
+      inner.style.fontSize = best + 'px';
+
+      // Safety net: if even the minimum size overflows (a hugely busy
+      // day), let that half scroll rather than clip content.
+      outer.style.overflow = (inner.scrollHeight > outer.clientHeight) ? 'auto' : 'hidden';
+    }
+
+    function fitAll() {
+      fitRegion(document.getElementById('topHalf'),
+                document.getElementById('calendar-events'));
+      fitRegion(document.getElementById('bottomHalf'),
+                document.getElementById('sheet-items'));
+    }
+
+    // --------------------------------------------------------------------
+    // STATUS / SETUP
+    // --------------------------------------------------------------------
+    function setStatus(msg) {
+      const el = document.getElementById('status');
+      el.textContent = msg || '';
+      el.style.display = msg ? 'block' : 'none';
+    }
+
+    function showSetup() {
+      document.getElementById('calendar-events').innerHTML =
+        '<div class="setup">Almost there. Deploy <code>google-apps-script.js</code> ' +
+        'as a Web App, then set <code>WEB_APP_URL</code> at the top of ' +
+        '<code>index.html</code>.</div>';
+      document.getElementById('sheet-items').innerHTML = '';
+      requestAnimationFrame(fitAll);
+    }
+
+    function showNeedsToken() {
+      const here = location.origin + location.pathname;
+      document.getElementById('calendar-events').innerHTML =
+        '<div class="setup">This tablet isn’t authorized yet. Open this page once as ' +
+        '<code>' + here + '#token=YOUR_SECRET</code> to store the access token on ' +
+        'this device. (The token is saved locally and removed from the address bar.)</div>';
+      document.getElementById('sheet-items').innerHTML = '';
+      requestAnimationFrame(fitAll);
+    }
+
+    // --------------------------------------------------------------------
+    // INIT
+    // --------------------------------------------------------------------
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(fitAll, 150);
+    });
+
+    fetchData();
+    setInterval(fetchData, REFRESH_MS);
   </script>
 </body>
 </html>

@@ -293,3 +293,190 @@ function condenseTasksSheet(sheet) {
     }
   }
 }
+
+
+/***********************************************************
+ *  4) WEB APP API  (powers the tablet/kiosk dashboard)
+ *
+ *  This lets index.html read the calendar + tasks and mark
+ *  tasks complete WITHOUT any Google sign-in on the tablet.
+ *  The script runs as you (the owner), authorized once.
+ *
+ *  Deploy:  Deploy > New deployment > type "Web app"
+ *    - Execute as:      Me
+ *    - Who has access:  Anyone
+ *  Copy the resulting /exec URL into index.html (WEB_APP_URL).
+ *
+ *  Optional shared secret: set a Script Property named
+ *  'API_TOKEN' (Project Settings > Script Properties) to a
+ *  random string, and put the same value in index.html
+ *  (API_TOKEN). If unset, the endpoint is open to anyone with
+ *  the (unguessable) /exec URL.
+ ***********************************************************/
+
+// Calendars shown on the dashboard (mirrors CALENDARS in index.html).
+const DASHBOARD_CALENDARS = [
+  { id: '2e45b1ad345b0c3420065de28fce836557d1eda41b2170b797e620ad7e228973@group.calendar.google.com', color: 'chores', omitPastEvents: true },
+  { id: 'km9ikgpkljdeiccu25mlng56d0@group.calendar.google.com', color: 'kids' },
+  { id: '9a3dc07b1e64453f57c0aa64e2996fcbdce315a1ead4edd5a2f9579ccf4dce87@group.calendar.google.com', color: 'family' },
+];
+
+const DASHBOARD_SPREADSHEET_ID = '1GjfSyjb4nGcFVNWez9Q55-Q9P2pnD30TenKeD0JQVeg';
+const DASHBOARD_TASKS_SHEET = 'Tasks';
+const DASHBOARD_DAYS = 7;
+
+/**
+ * Single GET endpoint. `?action=data` (default) returns the
+ * calendar + tasks payload; `?action=complete&row=&col=` strikes
+ * a task cell complete. We use GET for everything so the tablet's
+ * cross-origin fetch() never triggers a CORS preflight.
+ */
+function doGet(e) {
+  try {
+    if (!checkApiToken(e)) {
+      return jsonResponse({ ok: false, error: 'unauthorized' });
+    }
+    const action = (e && e.parameter && e.parameter.action) || 'data';
+    if (action === 'complete') {
+      const row = parseInt(e.parameter.row, 10);
+      const col = parseInt(e.parameter.col, 10);
+      completeDashboardTask(row, col);
+      return jsonResponse({ ok: true });
+    }
+    return jsonResponse({ ok: true, data: getDashboardData() });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: String(err) });
+  }
+}
+
+function checkApiToken(e) {
+  const required = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
+  if (!required) return true; // no token configured -> open access
+  const provided = e && e.parameter ? e.parameter.token : null;
+  return provided === required;
+}
+
+function jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function getDashboardData() {
+  return {
+    days: getDashboardDays(),
+    events: getDashboardEvents(),
+    tasks: getDashboardTasks(),
+  };
+}
+
+// The 7 day-columns, computed server-side so the tablet's clock /
+// timezone can't shift events into the wrong day.
+function getDashboardDays() {
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const days = [];
+  for (let i = 0; i < DASHBOARD_DAYS; i++) {
+    const d = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
+    days.push({
+      key: Utilities.formatDate(d, tz, 'yyyy-MM-dd'),
+      label: Utilities.formatDate(d, tz, 'EEE MMM d'),
+    });
+  }
+  return days;
+}
+
+function getDashboardEvents() {
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const end = new Date(now.getTime() + (DASHBOARD_DAYS - 1) * 24 * 60 * 60 * 1000);
+  end.setHours(23, 59, 59, 999);
+
+  const out = [];
+  DASHBOARD_CALENDARS.forEach(cal => {
+    const calendar = CalendarApp.getCalendarById(cal.id);
+    if (!calendar) return; // no access / bad id -> skip rather than fail
+    let events = calendar.getEvents(now, end);
+    if (cal.omitPastEvents) {
+      events = events.filter(ev => ev.getStartTime().getTime() >= now.getTime());
+    }
+    events.forEach(ev => {
+      const start = ev.getStartTime();
+      out.push({
+        summary: ev.getTitle(),
+        color: cal.color,
+        dateKey: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
+        time: ev.isAllDayEvent() ? 'All Day' : formatDashboardTime(start, tz),
+        sortMs: start.getTime(),
+      });
+    });
+  });
+  return out;
+}
+
+function formatDashboardTime(date, tz) {
+  // "9:30 AM" -> "9:30am"; "9:00 AM" -> "9am"
+  return Utilities.formatDate(date, tz, 'h:mm a').toLowerCase().replace(' ', '').replace(':00', '');
+}
+
+function getDashboardTasks() {
+  const ss = SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(DASHBOARD_TASKS_SHEET);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return { headers: [], columns: [] };
+
+  const range = sheet.getRange(1, 1, lastRow, lastCol);
+  const values = range.getValues();
+  const styles = range.getTextStyles();
+
+  const headers = values[0].map(h => (h === null || h === undefined) ? '' : String(h));
+
+  const columns = [];
+  for (let c = 0; c < lastCol; c++) {
+    const colItems = [];
+    for (let r = 1; r < lastRow; r++) { // r is the 0-based grid row (1 = first data row)
+      const raw = values[r][c];
+      const style = styles[r][c];
+      colItems.push({
+        text: (raw === null || raw === undefined) ? '' : String(raw),
+        isStricken: !!(style && style.isStrikethrough()),
+        row: r,
+        col: c,
+      });
+    }
+    columns.push(colItems);
+  }
+  return { headers, columns };
+}
+
+// row/col are the 0-based grid indices returned by getDashboardTasks().
+//
+// SECURITY: this is the ONLY write the Web App can perform, and it is
+// deliberately tiny. It can only set strikethrough on an existing,
+// non-empty, not-already-done cell in the Tasks sheet. It can never:
+//   - touch the header row (row 0) or any out-of-range cell,
+//   - reach any other sheet or spreadsheet,
+//   - write, replace, or delete any content.
+// The applied strikethrough is exactly what the nightly
+// archiveStrikethroughTasks() (and the "next" alternating logic) expects.
+// Worst case for a leaked credential: marking existing chores "done",
+// which is reversible via Sheets version history and the Completed archive.
+function completeDashboardTask(row, col) {
+  if (!Number.isInteger(row) || !Number.isInteger(col)) throw new Error('invalid cell');
+  if (row < 1 || col < 0) throw new Error('cell out of range'); // row 0 is the header
+
+  const ss = SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(DASHBOARD_TASKS_SHEET);
+  if (row + 1 > sheet.getLastRow() || col + 1 > sheet.getLastColumn()) {
+    throw new Error('cell out of range');
+  }
+
+  const cell = sheet.getRange(row + 1, col + 1);
+  const value = cell.getValue();
+  if (value === '' || value === null) throw new Error('cell is empty'); // only real tasks
+  if (cell.getTextStyle().isStrikethrough()) return; // already done -> idempotent no-op
+
+  const style = cell.getTextStyle().copy().setStrikethrough(true).build();
+  cell.setTextStyle(style);
+}
